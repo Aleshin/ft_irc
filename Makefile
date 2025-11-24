@@ -4,6 +4,8 @@ CXXFLAGS  := -Wall -Wextra -Werror -std=c++98 -I include
 
 SRCS      := src/main.cpp \
              src/Server.cpp \
+             src/ServerIO.cpp \
+             src/ServerCommands.cpp \
              src/Client.cpp
 
 OBJS      := $(SRCS:.cpp=.o)

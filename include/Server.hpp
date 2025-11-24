@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 #include <map>
-#include <poll.h>
-#include <netinet/in.h>
+#include <cstddef>   // std::size_t
+#include <poll.h>    // pollfd
 
 #include "Client.hpp"
 
@@ -14,24 +14,22 @@ public:
     Server(int port, const std::string &password);
     ~Server();
 
-    void run();
+    void run();  // main event loop
 
 private:
-    // Core loop helpers
+    // Low-level networking / event loop
     void initSocket();
     void setupPoll();
     void acceptClient();
-    void handleClientEvent(size_t index);
-    void handleRead(Client &client, int fd, size_t index);
+    void handleClientEvent(std::size_t index);
+    void handleRead(Client &client, int fd, std::size_t index);
     void handleWrite(Client &client, pollfd &pfd);
-    void removeClient(int fd, size_t index);
+    void removeClient(int fd, std::size_t index);
+    void setNonBlocking(int fd);
 
-    // Command handling
+    // IRC protocol logic
     void processLine(Client &client, const std::string &line);
     void tryRegister(Client &client);
-
-    // Internal helpers
-    void setNonBlocking(int fd);
     void sendToClient(Client &c, const std::string &msg);
 
 private:
