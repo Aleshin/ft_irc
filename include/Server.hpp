@@ -8,6 +8,7 @@
 #include <poll.h>    // pollfd
 
 #include "Client.hpp"
+#include "Channel.hpp"
 
 class Server {
 public:
@@ -40,6 +41,7 @@ private:
     int                     _listenFd;
     std::vector<pollfd>     _pfds;
     std::map<int, Client*>  _clients;
+    std::map<std::string, Channel*> _channels;  // Каналы (ключ = имя канала)
 };
 
 #endif // SERVER_HPP
