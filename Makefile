@@ -4,9 +4,9 @@ CXXFLAGS  := -Wall -Wextra -Werror -std=c++98 -I include
 
 SRCS      := src/main.cpp \
              src/Server.cpp \
-             src/ServerIO.cpp \
-             src/ServerCommands.cpp \
-             src/Client.cpp
+             src/Client.cpp \
+             src/Channel.cpp \
+             src/Message.cpp
 
 OBJS      := $(SRCS:.cpp=.o)
 
@@ -15,7 +15,7 @@ all: $(NAME)
 $(NAME): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
 
-src/%.o: src/%.cpp
+%.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:

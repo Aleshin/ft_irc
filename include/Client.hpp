@@ -3,28 +3,56 @@
 
 #include <string>
 
-struct Client {
-    int         fd;
-    std::string input;
-    std::string output;
-    std::string nickname;
-    std::string username;
-    bool        hasPass;
-    bool        hasNick;
-    bool        hasUser;
-    bool        registered;
+/**
+ * @class Client
+ * @brief Represents an IRC client connection
+ * 
+ * Manages client state including connection data, registration info,
+ * and buffered I/O operations.
+ */
+class Client {
+public:
+    // Orthodox Canonical Form (C++98)
+    Client();
+    explicit Client(int fd);
+    Client(const Client& other);
+    Client& operator=(const Client& other);
+    ~Client();
 
-    Client(int fd_)
-        : fd(fd_),
-          input(),
-          output(),
-          nickname(),
-          username(),
-          hasPass(false),
-          hasNick(false),
-          hasUser(false),
-          registered(false)
-    {}
+    // Getters
+    int getFd() const;
+    const std::string& getNickname() const;
+    const std::string& getUsername() const;
+    const std::string& getInputBuffer() const;
+    const std::string& getOutputBuffer() const;
+    bool isRegistered() const;
+    bool hasPassword() const;
+    bool hasNickname() const;
+    bool hasUsername() const;
+
+    // Setters
+    void setNickname(const std::string& nick);
+    void setUsername(const std::string& user);
+    void setPassword(bool hasPass);
+    void setRegistered(bool registered);
+    
+    // Buffer operations
+    void appendToInput(const std::string& data);
+    void appendToOutput(const std::string& data);
+    void clearInputBuffer();
+    void clearOutputBuffer();
+    std::string extractLine();  // Extract complete line from input buffer
+
+private:
+    int         _fd;
+    std::string _inputBuffer;
+    std::string _outputBuffer;
+    std::string _nickname;
+    std::string _username;
+    bool        _hasPassword;
+    bool        _hasNickname;
+    bool        _hasUsername;
+    bool        _registered;
 };
 
 #endif // CLIENT_HPP

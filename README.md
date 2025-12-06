@@ -1,89 +1,126 @@
-# ft_irc - Минимальный IRC Сервер для Параллельной Разработки
+# FT_IRC - IRC Server Implementation
 
-Учебный проект IRC сервера с минимальной инфраструктурой и четкими интерфейсами для параллельной разработки.
+> 42 School Project: Implementing an IRC (Internet Relay Chat) server in C++98
 
-## 🎯 Цель Проекта
+## 📖 Что такое IRC?
 
-Создать IRC сервер на C++98 с возможностью параллельной разработки несколькими студентами без конфликтов кода.
+**IRC (Internet Relay Chat)** - протокол текстового общения в реальном времени, созданный в 1988 году. Это один из старейших протоколов интернет-коммуникации, до сих пор активно используется.
+
+### Основные концепции IRC:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     IRC Network                         │
+│                                                         │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐        │
+│   │ Client A │    │ Client B │    │ Client C │        │
+│   └─────┬────┘    └────┬─────┘    └─────┬────┘        │
+│         │              │                 │             │
+│         └──────────────┼─────────────────┘             │
+│                        │                               │
+│                   ┌────▼────┐                          │
+│                   │  SERVER │                          │
+│                   └────┬────┘                          │
+│                        │                               │
+│         ┌──────────────┼──────────────┐                │
+│         │              │              │                │
+│    ┌────▼────┐    ┌───▼────┐    ┌───▼────┐           │
+│    │#general │    │#random │    │#help   │           │
+│    │ channel │    │channel │    │channel │           │
+│    └─────────┘    └────────┘    └────────┘           │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Ключевые элементы:
+
+1. **Server (Сервер)** - центральный узел, управляющий подключениями
+2. **Client (Клиент)** - пользователь, подключенный к серверу
+3. **Channel (Канал)** - комната для группового общения (начинается с `#`)
+4. **Nickname (Никнейм)** - уникальное имя пользователя на сервере
+5. **Operator (Оператор)** - привилегированный пользователь канала
+
+## 🎯 Цель проекта
+
+Создать функциональный IRC сервер, который:
+- ✅ Принимает множественные подключения (без fork)
+- ✅ Использует неблокирующий I/O через `poll()`
+- ✅ Реализует основные IRC команды
+- ✅ Управляет каналами с различными режимами
+- ✅ Написан на C++98 в каноническом стиле
+
+## 📚 Документация
+
+> 💡 **Не знаете, с чего начать?** → [docs/NAVIGATION.md](docs/NAVIGATION.md) - навигатор по всей документации
+
+Проект содержит полную документацию для разработчиков любого уровня:
+
+| Файл | Описание | Для кого | Размер |
+|------|----------|----------|--------|
+| **[NAVIGATION.md](docs/NAVIGATION.md)** | 🧭 Навигатор по документации | Все | ~240 строк |
+| **[QUICKSTART.md](docs/QUICKSTART.md)** | 🚀 Краткая справка | Опытные | ~320 строк |
+| **[GETTING_STARTED.md](docs/GETTING_STARTED.md)** | 📖 Пошаговое руководство | Новички | ~700 строк |
+| **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | 🏗️ Архитектура проекта | Все | ~230 строк |
+| **[INTERFACES.md](docs/INTERFACES.md)** | 💻 Полное API | Разработчики | ~630 строк |
+
+### Рекомендуемый путь:
+
+**Новичок в IRC?**
+```
+README.md → GETTING_STARTED.md → начинайте с Модуля 2
+```
+
+**Опытный разработчик?**
+```
+QUICKSTART.md → INTERFACES.md → выбирайте модуль
+```
+
+**Нужна справка?**
+```
+NAVIGATION.md - найдите нужную информацию по ключевым словам
+```
 
 ## ✅ Что Уже Реализовано
 
-- ✅ **Сетевой слой** - работа с сокетами, poll(), неблокирующий I/O
-- ✅ **Базовая структура** - Client, Channel, Server
-- ✅ **Простейшая регистрация** - PASS, NICK, USER команды
-- ✅ **Интерфейсы** - четкие границы между компонентами
+- ✅ **Client** (полностью) - буферы I/O, регистрация, геттеры/сеттеры
+- ✅ **Channel** (полностью) - участники, операторы, режимы +i/+t/+k/+o/+l
+- ✅ **Server** (структура) - event loop с poll(), интерфейсы методов
+- ✅ **Message** (интерфейсы) - заготовки для парсинга и построения ответов
+- ✅ **Документация** - 4 файла с полными руководствами
 
-## 📋 Интерфейсы для Реализации
+## 🎓 Модули для реализации
 
-### 1. CommandParser (include/CommandParser.hpp)
-Парсинг IRC сообщений в структуру IRCMessage
-```cpp
-IRCMessage parse(const std::string& rawMessage);
-```
+Проект разделен на **5 независимых модулей** для параллельной разработки:
 
-### 2. MessageBuilder (include/MessageBuilder.hpp)
-Построение IRC ответов сервера
-```cpp
-std::string buildWelcome(const std::string& server, const std::string& nick);
-std::string buildJoin(const std::string& prefix, const std::string& channel);
-std::string buildPrivmsg(const std::string& prefix, const std::string& target, const std::string& msg);
-std::string buildError(const std::string& server, const std::string& nick, const std::string& code, const std::string& msg);
-```
+### 🟢 Модуль 1: Сетевой уровень (2-3 дня)
+**Файл:** `src/Server.cpp`  
+**Методы:** `initSocket()`, `acceptClient()`, `readFromClient()`, `writeToClient()`, `removeClient()`  
+**Знания:** `socket()`, `bind()`, `listen()`, `accept()`, `poll()`, неблокирующий I/O
 
-### 3. Utils (include/Utils.hpp)
-Вспомогательные функции
-```cpp
-std::vector<std::string> split(const std::string& str, char delimiter);
-std::string trim(const std::string& str);
-std::string toUpper(const std::string& str);
-bool isValidNickname(const std::string& nick);
-bool isValidChannelName(const std::string& channel);
-```
+### 🟡 Модуль 2: IRC протокол (2-3 дня)
+**Файл:** `src/Message.cpp`  
+**Методы:** `parse()`, `build*()`, `isValidNickname()`, `isValidChannelName()`  
+**Знания:** Парсинг строк, формат IRC (RFC 2812)
 
-### 4. IRC Команды (src/ServerCommands.cpp)
-Обработчики команд - добавляются в `processLine()`
-- JOIN, PART, KICK
-- PRIVMSG, NOTICE
-- TOPIC, NAMES, MODE
-- INVITE, и т.д.
+### 🔵 Модуль 3: Регистрация (1-2 дня)
+**Файл:** `src/Server.cpp`  
+**Методы:** `handlePass()`, `handleNick()`, `handleUser()`, `tryRegisterClient()`  
+**Зависимости:** Модуль 2
+
+### 🟣 Модуль 4: Каналы (2-3 дня)
+**Файл:** `src/Server.cpp`  
+**Методы:** `handleJoin()`, `handlePart()`, `handlePrivmsg()`, `broadcastToChannel()`  
+**Зависимости:** Модули 2 и 3
+
+### 🟠 Модуль 5: Операторские команды (2-3 дня)
+**Файл:** `src/Server.cpp`  
+**Методы:** `handleKick()`, `handleInvite()`, `handleTopic()`, `handleMode()`  
+**Зависимости:** Модуль 4
+
+**Детали в [docs/QUICKSTART.md](docs/QUICKSTART.md) и [docs/INTERFACES.md](docs/INTERFACES.md)**
 
 ## 🔧 Структура Данных
 
 ### IRCMessage (include/Types.hpp)
-```cpp
-struct IRCMessage {
-    std::string prefix;                  // Опциональный prefix
-    std::string command;                 // Команда IRC
-    std::vector<std::string> params;     // Параметры команды
-};
-```
-
-### Channel (include/Channel.hpp)
-```cpp
-struct Channel {
-    std::string name;
-    std::string topic;
-    std::set<std::string> members;
-    std::set<std::string> operators;
-    bool inviteOnly;
-    bool topicRestricted;
-    std::string key;
-    int userLimit;
-};
-```
-
-### Client (include/Client.hpp)
-```cpp
-struct Client {
-    int fd;
-    std::string input, output;
-    std::string nickname, username;
-    bool hasPass, hasNick, hasUser;
-    bool registered;
-};
-```
-
-## 🚀 Быстрый Старт
 
 ### Компиляция
 ```bash
