@@ -24,6 +24,8 @@ public:
     const std::string& getNickname() const;
     const std::string& getUsername() const;
     const std::string& getInputBuffer() const;
+    std::string& getOutputBuffer();
+
     const std::string& getOutputBuffer() const;
     bool isRegistered() const;
     bool hasPassword() const;

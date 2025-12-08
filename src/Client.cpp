@@ -57,6 +57,8 @@ const std::string& Client::getNickname() const { return _nickname; }
 const std::string& Client::getUsername() const { return _username; }
 const std::string& Client::getInputBuffer() const { return _inputBuffer; }
 const std::string& Client::getOutputBuffer() const { return _outputBuffer; }
+std::string& Client::getOutputBuffer() { return _outputBuffer; }
+
 bool Client::isRegistered() const { return _registered; }
 bool Client::hasPassword() const { return _hasPassword; }
 bool Client::hasNickname() const { return _hasNickname; }

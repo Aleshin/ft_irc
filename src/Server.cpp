@@ -81,9 +81,7 @@ void Server::addPollFd(int fd, short events) {
 void Server::run() {
     try {
         initSocket();
-
         addPollFd(_serverFd, POLLIN);
-        
         // 10 maximum pending clients
         if (listen(_serverFd, 10) < 0) {
             throw std::runtime_error(
@@ -212,19 +210,76 @@ void Server::acceptClient() {
 
 
 void Server::handleClient(size_t index) {
-    // TODO: Students implement client handling
-    (void)index;
+    int fd = _pollfds[index].fd;
+    Client* client = _clients[fd];
+
+    if (!client)
+        return;
+
+    // 1. читаем
+    readFromClient(*client, 0);  // если ошибка → исключение → removeClient
+
+    // 2. обрабатываем строки
+    //processClientBuffer(*client);
+    client->appendToOutput("ECHO!\r\n"); //ТЕСТ!!
+
+    // 3. записываем ответ
+    writeToClient(*client);
 }
 
 void Server::readFromClient(Client& client, size_t index) {
-    // TODO: Students implement reading from client
-    (void)client;
-    (void)index;
+    (void)index; //not shure if I need it
+
+    int fd = client.getFd();
+
+    char buf[1024];
+    ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
+
+    if (n == 0) {
+        // Клиент закрыл соединение
+        throw std::runtime_error("client disconnected");
+    }
+
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            // временной ошибки нет — просто нечего читать, это НЕ ошибка
+            return;
+        }
+        throw std::runtime_error(
+            std::string("recv() failed: ") + strerror(errno)
+        );
+    }
+    // добавляем прочитанные данные
+    client.appendToInput(std::string(buf, n));
+    std::cout << "Buffer now: [" << client.getInputBuffer() << "]\n"; //TEST
 }
 
 void Server::writeToClient(Client& client) {
-    // TODO: Students implement writing to client
-    (void)client;
+    int fd = client.getFd();
+    std::string& out = client.getOutputBuffer();
+
+    // Если нечего отправлять — сразу выходим
+    if (out.empty())
+        return;
+
+    ssize_t n = send(fd,
+                     out.data(),
+                     out.size(),
+                     0);
+
+    if (n < 0) {
+        // Временная невозможность записи — это НЕ ошибка
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return;
+
+        // Настоящая ошибка
+        throw std::runtime_error(
+            std::string("send() failed: ") + strerror(errno)
+        );
+    }
+
+    // Если отправили часть — удаляем её из буфера
+    out.erase(0, n);
 }
 
 void Server::removeClient(int fd) { //TO DO пока одна функция при сбое и при штатном отключении
