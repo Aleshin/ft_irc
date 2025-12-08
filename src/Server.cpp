@@ -49,7 +49,10 @@ Server& Server::operator=(const Server& other) {
 }
 
 Server::~Server() {
-    // Close all client connections
+    cleanup();
+}
+
+void Server::cleanup(){
     for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
         close(it->first);
         delete it->second;
@@ -65,53 +68,148 @@ Server::~Server() {
         close(_serverFd);
 }
 
+void Server::addPollFd(int fd, short events) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = events;
+    pfd.revents = 0;
+
+    _pollfds.push_back(pfd);
+}
+
 // Main entry point
 void Server::run() {
-    initSocket();
-    
-    std::cout << "Server listening on port " << _port << std::endl;
-    
-    // Main event loop
-    while (true) {
-        int ret = poll(&_pollfds[0], _pollfds.size(), -1);
-        if (ret < 0) {
-            std::cerr << "poll() error" << std::endl;
-            break;
-        }
+    try {
+        initSocket();
+
+        addPollFd(_serverFd, POLLIN);
         
-        for (size_t i = 0; i < _pollfds.size(); ++i) {
-            if (_pollfds[i].revents & POLLIN) {
-                if (_pollfds[i].fd == _serverFd) {
-                    acceptClient();
-                } else {
-                    handleClient(i);
-                }
+        // 10 maximum pending clients
+        if (listen(_serverFd, 10) < 0) {
+            throw std::runtime_error(
+                "listen() failed: " + std::string(strerror(errno))
+            );
+        }
+        std::cout << "Server listening on port " << _port << std::endl;
+
+        // Main event loop
+        while (true) {
+            int ret = poll(&_pollfds[0], _pollfds.size(), -1);
+            if (ret < 0) {
+                throw std::runtime_error("poll() failed: " + std::string(strerror(errno)));
             }
-            
-            if (_pollfds[i].revents & POLLOUT) {
-                if (_pollfds[i].fd != _serverFd) {
-                    Client* client = _clients[_pollfds[i].fd];
-                    if (client)
-                        writeToClient(*client);
+
+            for (size_t i = 0; i < _pollfds.size(); ++i) {
+                const int fd = _pollfds[i].fd;
+
+                // Read events
+                if (_pollfds[i].revents & POLLIN) {
+                    try {
+                        if (fd == _serverFd) {
+                            acceptClient();     // may throw
+                        } else {
+                            handleClient(i);    // may throw
+                        }
+                    } catch (const std::exception &e) {
+                        std::cerr << "Error handling POLLIN for fd "
+                                  << fd << ": " << e.what() << std::endl;
+
+                        removeClient(fd);       // ensure cleanup
+                    }
+                }
+
+                // Write events
+                if (_pollfds[i].revents & POLLOUT) {
+                    if (fd != _serverFd) {
+                        try {
+                            Client* client = _clients[fd];
+                            if (client) {
+                                writeToClient(*client);  // may throw
+                            }
+                        } catch (const std::exception &e) {
+                            std::cerr << "Error handling POLLOUT for fd "
+                                      << fd << ": " << e.what() << std::endl;
+
+                            removeClient(fd);
+                        }
+                    }
                 }
             }
         }
     }
+    catch (const std::exception &e) {
+        std::cerr << "Fatal server error: " << e.what() << std::endl;
+    }
+    // Server shuts down
+    cleanup();
 }
+
 
 // Network operations (студенты реализуют детально)
 void Server::initSocket() {
     // TODO: Students implement socket creation and binding
-    (void)_port;
+    //domain AF_INET for Ipv4 AF_INET6 for Ipv6
+    //type SOCK_STREAM for TCP
+    //protocol 0
+    _serverFd = socket(AF_INET, SOCK_STREAM, 0);
+    if (_serverFd < 0)
+    {
+        throw std::runtime_error("socket() failed: " + std::string(strerror(errno)));
+    }
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(_port); //Host To Network Short (Host → сеть, 16 бит)
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    //to reuse socket address in case of bind error
+    // int opt = 1;
+    // if (setsockopt(_serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+    //     throw std::runtime_error("setsockopt(SO_REUSEADDR) failed: " +
+    //     std::string(strerror(errno)));
+    // }
+
+    if (bind(_serverFd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+    {
+        throw std::runtime_error("bind() failed: " + std::string(strerror(errno)));
+    }
 }
 
 void Server::setNonBlocking(int fd) {
-    fcntl(fd, F_SETFL, O_NONBLOCK);
+    if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
+        throw std::runtime_error(
+            "fcntl(F_SETFL, O_NONBLOCK) failed: " + std::string(strerror(errno))
+        );
+    }
 }
 
+//only establish connection, no checks yet
 void Server::acceptClient() {
-    // TODO: Students implement client acceptance
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+
+    int new_fd = accept(_serverFd, (struct sockaddr *)&client_addr, &addr_len);
+    if (new_fd < 0) {
+        std::cerr << "accept() failed: " << strerror(errno) << std::endl;
+        return;
+    } 
+    
+    try {
+        // 1. Set non-blocking
+        setNonBlocking(new_fd);
+    }
+    catch (const std::exception &e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        close(new_fd);                    // Clean up leaked fd
+        return;
+    }
+    // 2. Add new socket to pollfds
+    addPollFd(new_fd, POLLIN);
+
+    // 3. Create and store client Add to clients map (duplicate FD assumed impossible)
+    _clients[new_fd] = new Client(new_fd);
+
+    std::cout << "New client connected on fd " << new_fd << std::endl;
 }
+
 
 void Server::handleClient(size_t index) {
     // TODO: Students implement client handling
@@ -129,10 +227,25 @@ void Server::writeToClient(Client& client) {
     (void)client;
 }
 
-void Server::removeClient(size_t index) {
-    // TODO: Students implement client removal
-    (void)index;
+void Server::removeClient(int fd) { //TO DO пока одна функция при сбое и при штатном отключении
+    close(fd);  // close socket
+
+    // free client object
+    if (_clients.count(fd)) {
+        delete _clients[fd];
+        _clients.erase(fd);
+    }
+
+    // remove from poll list
+    for (size_t i = 0; i < _pollfds.size(); ++i) {
+        if (_pollfds[i].fd == fd) {
+            _pollfds.erase(_pollfds.begin() + i);
+            break;
+        }
+    }
+    //std::cout << "Client on fd " << fd << " disconnected" << std::endl;
 }
+
 
 // IRC protocol handlers (студенты реализуют)
 void Server::processCommand(Client& client, const std::string& line) {

@@ -37,7 +37,9 @@ private:
     void handleClient(size_t index);
     void readFromClient(Client& client, size_t index);
     void writeToClient(Client& client);
-    void removeClient(size_t index);
+   // void removeClient(size_t index);
+    void removeClient(int fd);
+
 
     // IRC protocol (students implement)
     void processCommand(Client& client, const std::string& line);
@@ -54,12 +56,14 @@ private:
 
     // Helpers
     void tryRegisterClient(Client& client);
+    void addPollFd(int fd, short events);
     void sendToClient(Client& client, const std::string& message);
     void broadcastToChannel(const std::string& channelName, 
                            const std::string& message, 
                            const std::string& excludeNick);
     Channel* getChannel(const std::string& name);
     Client* getClientByNick(const std::string& nickname);
+    void cleanup();
 
 private:
     int                     _port;
