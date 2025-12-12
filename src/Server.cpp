@@ -145,7 +145,6 @@ void Server::run() {
 
 // Network operations (студенты реализуют детально)
 void Server::initSocket() {
-    // TODO: Students implement socket creation and binding
     //domain AF_INET for Ipv4 AF_INET6 for Ipv6
     //type SOCK_STREAM for TCP
     //protocol 0
@@ -158,7 +157,7 @@ void Server::initSocket() {
     addr.sin_family = AF_INET;
     addr.sin_port = htons(_port); //Host To Network Short (Host → сеть, 16 бит)
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    //to reuse socket address in case of bind error
+    //to reuse socket address in case of bind error NOT NECESSARY YET
     // int opt = 1;
     // if (setsockopt(_serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
     //     throw std::runtime_error("setsockopt(SO_REUSEADDR) failed: " +
@@ -172,7 +171,13 @@ void Server::initSocket() {
 }
 
 void Server::setNonBlocking(int fd) {
-    if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        throw std::runtime_error(
+            "fcntl(F_GETFL) failed: " + std::string(strerror(errno))
+        );
+    }
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
         throw std::runtime_error(
             "fcntl(F_SETFL, O_NONBLOCK) failed: " + std::string(strerror(errno))
         );
@@ -312,6 +317,7 @@ void Server::processCommand(Client& client, const std::string& line) {
 void Server::handlePass(Client& client, const Message& msg) {
     (void)client;
     (void)msg;
+
 }
 
 void Server::handleNick(Client& client, const Message& msg) {

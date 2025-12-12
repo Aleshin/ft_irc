@@ -9,6 +9,8 @@
 #include "Client.hpp"
 #include "Channel.hpp"
 #include "Message.hpp"
+#include <cerrno>      // errno, EAGAIN, EWOULDBLOCK, etc.
+#include <cstring>     // strerror()
 
 /**
  * @class Server
