@@ -491,18 +491,218 @@ void Server::handleUser(Client& client, const Message& msg) {
 }
 
 void Server::handleJoin(Client& client, const Message& msg) {
-    (void)client;
-    (void)msg;
+    const std::string& nick = client.getDisplayNick();
+    
+    // Check if registered
+    if (!client.isRegistered()) {
+        sendToClient(client, Message::reply(ERR_NOTREGISTERED, nick,
+            "You have not registered").serialize());
+        return;
+    }
+    
+    // Check for channel parameter
+    if (msg.getParams().empty()) {
+        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
+            "JOIN", "Not enough parameters").serialize());
+        return;
+    }
+    
+    std::string channelName = msg.getParams()[0];
+    
+    // Validate channel name
+    if (!Message::isValidChannel(channelName)) {
+        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
+            channelName, "No such channel").serialize());
+        return;
+    }
+    
+    // Get or create channel
+    Channel* channel = getChannel(channelName);
+    if (!channel) {
+        channel = new Channel(channelName);
+        _channels[channelName] = channel;
+        // First user becomes operator
+        channel->addOperator(client.getNickname());
+    }
+    
+    // Check if already on channel
+    if (channel->hasMember(client.getNickname()))
+        return;
+    
+    // Check invite-only mode
+    if (channel->isInviteOnly()) {
+        sendToClient(client, Message::replyParam(ERR_INVITEONLYCHAN, nick,
+            channelName, "Cannot join channel (+i)").serialize());
+        return;
+    }
+    
+    // Check channel key
+    if (!channel->getKey().empty()) {
+        std::string providedKey = (msg.getParams().size() > 1) ? msg.getParams()[1] : "";
+        if (providedKey != channel->getKey()) {
+            sendToClient(client, Message::replyParam(ERR_BADCHANNELKEY, nick,
+                channelName, "Cannot join channel (+k)").serialize());
+            return;
+        }
+    }
+    
+    // Check user limit
+    if (channel->getUserLimit() > 0 && 
+        static_cast<int>(channel->getMembers().size()) >= channel->getUserLimit()) {
+        sendToClient(client, Message::replyParam(ERR_CHANNELISFULL, nick,
+            channelName, "Cannot join channel (+l)").serialize());
+        return;
+    }
+    
+    // Add member to channel
+    channel->addMember(client.getNickname());
+    
+    // Build user prefix
+    std::string userPrefix = client.getNickname() + "!" + 
+                            client.getUsername() + "@localhost";
+    
+    // Notify all channel members (including the joining user)
+    std::string joinMsg = Message::fromUser(userPrefix, "JOIN", channelName).serialize();
+    broadcastToChannel(channelName, joinMsg, "");
+    
+    // Send topic if exists
+    if (!channel->getTopic().empty()) {
+        sendToClient(client, Message::replyParam(RPL_TOPIC, nick,
+            channelName, channel->getTopic()).serialize());
+    } else {
+        sendToClient(client, Message::replyParam(RPL_NOTOPIC, nick,
+            channelName, "No topic is set").serialize());
+    }
+    
+    // Send names list (353 + 366)
+    std::string names;
+    const std::set<std::string>& members = channel->getMembers();
+    for (std::set<std::string>::const_iterator it = members.begin(); 
+         it != members.end(); ++it) {
+        if (!names.empty()) names += " ";
+        if (channel->isOperator(*it)) names += "@";
+        names += *it;
+    }
+    
+    // RPL_NAMREPLY: :server 353 nick = #channel :@op user1 user2
+    sendToClient(client, Message()
+        .prefix(_serverName)
+        .command("353")
+        .param(nick)
+        .param("=")
+        .param(channelName)
+        .trailing(names)
+        .serialize());
+    
+    // RPL_ENDOFNAMES: :server 366 nick #channel :End of /NAMES list
+    sendToClient(client, Message::replyParam(RPL_ENDOFNAMES, nick,
+        channelName, "End of /NAMES list").serialize());
 }
 
 void Server::handlePart(Client& client, const Message& msg) {
-    (void)client;
-    (void)msg;
+    const std::string& nick = client.getDisplayNick();
+    
+    if (!client.isRegistered()) {
+        sendToClient(client, Message::reply(ERR_NOTREGISTERED, nick,
+            "You have not registered").serialize());
+        return;
+    }
+    
+    if (msg.getParams().empty()) {
+        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
+            "PART", "Not enough parameters").serialize());
+        return;
+    }
+    
+    std::string channelName = msg.getParams()[0];
+    std::string reason = msg.getTrailing().empty() ? client.getNickname() : msg.getTrailing();
+    
+    Channel* channel = getChannel(channelName);
+    if (!channel) {
+        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
+            channelName, "No such channel").serialize());
+        return;
+    }
+    
+    if (!channel->hasMember(client.getNickname())) {
+        sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, nick,
+            channelName, "You're not on that channel").serialize());
+        return;
+    }
+    
+    // Build user prefix and notify channel
+    std::string userPrefix = client.getNickname() + "!" + 
+                            client.getUsername() + "@localhost";
+    std::string partMsg = Message::fromUser(userPrefix, "PART", channelName, reason).serialize();
+    broadcastToChannel(channelName, partMsg, "");
+    
+    // Remove member from channel
+    channel->removeMember(client.getNickname());
+    
+    // Delete empty channel
+    if (channel->getMembers().empty()) {
+        delete channel;
+        _channels.erase(channelName);
+    }
 }
 
 void Server::handlePrivmsg(Client& client, const Message& msg) {
-    (void)client;
-    (void)msg;
+    const std::string& nick = client.getDisplayNick();
+    
+    if (!client.isRegistered()) {
+        sendToClient(client, Message::reply(ERR_NOTREGISTERED, nick,
+            "You have not registered").serialize());
+        return;
+    }
+    
+    if (msg.getParams().empty()) {
+        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
+            "PRIVMSG", "Not enough parameters").serialize());
+        return;
+    }
+    
+    std::string target = msg.getParams()[0];
+    std::string text = msg.getTrailing();
+    
+    if (text.empty()) {
+        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
+            "PRIVMSG", "Not enough parameters").serialize());
+        return;
+    }
+    
+    std::string userPrefix = client.getNickname() + "!" + 
+                            client.getUsername() + "@localhost";
+    
+    // Check if target is a channel
+    if (Message::isValidChannel(target)) {
+        Channel* channel = getChannel(target);
+        if (!channel) {
+            sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
+                target, "No such channel").serialize());
+            return;
+        }
+        
+        if (!channel->hasMember(client.getNickname())) {
+            sendToClient(client, Message::replyParam(ERR_CANNOTSENDTOCHAN, nick,
+                target, "Cannot send to channel").serialize());
+            return;
+        }
+        
+        // Send to all except sender
+        std::string privmsg = Message::fromUser(userPrefix, "PRIVMSG", target, text).serialize();
+        broadcastToChannel(target, privmsg, client.getNickname());
+    } else {
+        // Private message to user
+        Client* targetClient = getClientByNick(target);
+        if (!targetClient) {
+            sendToClient(client, Message::replyParam(ERR_NOSUCHNICK, nick,
+                target, "No such nick/channel").serialize());
+            return;
+        }
+        
+        std::string privmsg = Message::fromUser(userPrefix, "PRIVMSG", target, text).serialize();
+        sendToClient(*targetClient, privmsg);
+    }
 }
 
 void Server::handleKick(Client& client, const Message& msg) {
@@ -562,9 +762,20 @@ void Server::sendToClient(Client& client, const std::string& message) {
 void Server::broadcastToChannel(const std::string& channelName,
                                  const std::string& message,
                                  const std::string& excludeNick) {
-    (void)channelName;
-    (void)message;
-    (void)excludeNick;
+    Channel* channel = getChannel(channelName);
+    if (!channel)
+        return;
+    
+    const std::set<std::string>& members = channel->getMembers();
+    for (std::set<std::string>::const_iterator it = members.begin();
+         it != members.end(); ++it) {
+        if (*it == excludeNick)
+            continue;
+        
+        Client* client = getClientByNick(*it);
+        if (client)
+            sendToClient(*client, message);
+    }
 }
 
 Channel* Server::getChannel(const std::string& name) {
