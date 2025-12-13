@@ -7,6 +7,7 @@ Client::Client()
       _outputBuffer(),
       _nickname(),
       _username(),
+      _realname(),
       _hasPassword(false),
       _hasNickname(false),
       _hasUsername(false),
@@ -18,6 +19,7 @@ Client::Client(int fd)
       _outputBuffer(),
       _nickname(),
       _username(),
+      _realname(),
       _hasPassword(false),
       _hasNickname(false),
       _hasUsername(false),
@@ -29,6 +31,7 @@ Client::Client(const Client& other)
       _outputBuffer(other._outputBuffer),
       _nickname(other._nickname),
       _username(other._username),
+      _realname(other._realname),
       _hasPassword(other._hasPassword),
       _hasNickname(other._hasNickname),
       _hasUsername(other._hasUsername),
@@ -41,6 +44,7 @@ Client& Client::operator=(const Client& other) {
         _outputBuffer = other._outputBuffer;
         _nickname = other._nickname;
         _username = other._username;
+        _realname = other._realname;
         _hasPassword = other._hasPassword;
         _hasNickname = other._hasNickname;
         _hasUsername = other._hasUsername;
@@ -55,6 +59,7 @@ Client::~Client() {}
 int Client::getFd() const { return _fd; }
 const std::string& Client::getNickname() const { return _nickname; }
 const std::string& Client::getUsername() const { return _username; }
+const std::string& Client::getRealname() const { return _realname; }
 const std::string& Client::getInputBuffer() const { return _inputBuffer; }
 const std::string& Client::getOutputBuffer() const { return _outputBuffer; }
 std::string& Client::getOutputBuffer() { return _outputBuffer; }
@@ -73,6 +78,10 @@ void Client::setNickname(const std::string& nick) {
 void Client::setUsername(const std::string& user) {
     _username = user;
     _hasUsername = true;
+}
+
+void Client::setRealname(const std::string& realname) {
+    _realname = realname;
 }
 
 void Client::setPassword(bool hasPass) {
