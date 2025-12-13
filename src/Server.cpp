@@ -1,4 +1,5 @@
 #include "Server.hpp"
+#include "Message.hpp"
 #include <iostream>
 #include <cstring>
 #include <unistd.h>
@@ -336,27 +337,132 @@ void Server::removeClient(int fd) {
 }
 
 // ============================================================================
-// IRC PROTOCOL (заглушки для Фазы 2)
+// IRC PROTOCOL - Phase 2: Parsing & Validation
 // ============================================================================
 
 void Server::processCommand(Client& client, const std::string& line) {
-    (void)client;
-    (void)line;
+    std::cout << "[DEBUG] Processing command from fd " << client.getFd() 
+              << ": " << line << std::endl;
+
+    // Parse the IRC message using Message class
+    Message msg = Message::parse(line);
+
+    if (!msg.isValid()) {
+        std::cerr << "[ERROR] Invalid message format" << std::endl;
+        return;
+    }
+
+    const std::string& cmd = msg.getCommand();
+    
+    // Dispatch to appropriate handler
+    if (cmd == "PASS") {
+        handlePass(client, msg);
+    } else if (cmd == "NICK") {
+        handleNick(client, msg);
+    } else if (cmd == "USER") {
+        handleUser(client, msg);
+    } else if (cmd == "JOIN") {
+        handleJoin(client, msg);
+    } else if (cmd == "PART") {
+        handlePart(client, msg);
+    } else if (cmd == "PRIVMSG") {
+        handlePrivmsg(client, msg);
+    } else if (cmd == "KICK") {
+        handleKick(client, msg);
+    } else if (cmd == "INVITE") {
+        handleInvite(client, msg);
+    } else if (cmd == "TOPIC") {
+        handleTopic(client, msg);
+    } else if (cmd == "MODE") {
+        handleMode(client, msg);
+    } else if (cmd == "QUIT") {
+        std::cout << "Client requested QUIT" << std::endl;
+        removeClient(client.getFd());
+    } else {
+        // Unknown command
+        std::string nick = client.getNickname().empty() ? "*" : client.getNickname();
+        sendToClient(client, Message::replyParam(ERR_UNKNOWNCOMMAND, nick, cmd, 
+                                                  "Unknown command").serialize());
+    }
 }
 
 void Server::handlePass(Client& client, const Message& msg) {
-    (void)client;
-    (void)msg;
+    std::string nick = client.getNickname().empty() ? "*" : client.getNickname();
+    
+    if (msg.getParams().empty()) {
+        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick, 
+                                                  "PASS", "Not enough parameters").serialize());
+        return;
+    }
+
+    if (client.isRegistered()) {
+        sendToClient(client, Message::reply(ERR_ALREADYREGISTRED, nick, 
+                                             "You may not reregister").serialize());
+        return;
+    }
+
+    std::string password = msg.getParams()[0];
+    std::cout << "[DEBUG] Password set for client fd " << client.getFd() << std::endl;
+    
+    // Phase 3 will validate against server password
+    (void)password;
 }
 
 void Server::handleNick(Client& client, const Message& msg) {
-    (void)client;
-    (void)msg;
+    std::string nick = client.getNickname().empty() ? "*" : client.getNickname();
+    
+    if (msg.getParams().empty()) {
+        sendToClient(client, Message::reply(ERR_NONICKNAMEGIVEN, nick, 
+                                             "No nickname given").serialize());
+        return;
+    }
+
+    std::string newNick = msg.getParams()[0];
+
+    if (!Message::isValidNick(newNick)) {
+        sendToClient(client, Message::replyParam(ERR_ERRONEUSNICKNAME, nick, 
+                                                  newNick, "Erroneous nickname").serialize());
+        return;
+    }
+
+    if (getClientByNick(newNick) != NULL) {
+        sendToClient(client, Message::replyParam(ERR_NICKNAMEINUSE, nick, 
+                                                  newNick, "Nickname is already in use").serialize());
+        return;
+    }
+
+    std::cout << "[DEBUG] Setting nickname: " << newNick << std::endl;
+    client.setNickname(newNick);
+    tryRegisterClient(client);
 }
 
 void Server::handleUser(Client& client, const Message& msg) {
-    (void)client;
-    (void)msg;
+    std::string nick = client.getNickname().empty() ? "*" : client.getNickname();
+    
+    if (msg.getParams().size() < 3) {
+        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick, 
+                                                  "USER", "Not enough parameters").serialize());
+        return;
+    }
+
+    if (client.isRegistered()) {
+        sendToClient(client, Message::reply(ERR_ALREADYREGISTRED, nick, 
+                                             "You may not reregister").serialize());
+        return;
+    }
+
+    std::string username = msg.getParams()[0];
+    std::string realname = msg.getTrailing();
+
+    if (!Message::isValidUser(username)) {
+        std::cerr << "[ERROR] Invalid username format: " << username << std::endl;
+        return;
+    }
+
+    std::cout << "[DEBUG] Setting user info: " << username << " (" << realname << ")" << std::endl;
+    client.setUsername(username);
+    client.setRealname(realname);
+    tryRegisterClient(client);
 }
 
 void Server::handleJoin(Client& client, const Message& msg) {
@@ -394,7 +500,7 @@ void Server::handleMode(Client& client, const Message& msg) {
     (void)msg;
 }
 
-// Helper functions (будут реализованы позже)
+// Helper functions
 void Server::tryRegisterClient(Client& client) {
     (void)client;
 }

@@ -2,6 +2,7 @@ NAME      := ircserv
 CXX       := c++
 CXXFLAGS  := -Wall -Wextra -Werror -std=c++98 -I include
 
+# Clean 4-class architecture: Server, Client, Channel, Message
 SRCS      := src/main.cpp \
              src/Server.cpp \
              src/Client.cpp \
