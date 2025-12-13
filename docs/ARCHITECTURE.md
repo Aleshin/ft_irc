@@ -55,10 +55,10 @@ std::string _inputBuffer;   // Буфер входящих данных
 std::string _outputBuffer;  // Буфер исходящих данных
 std::string _nickname;      // Никнейм
 std::string _username;      // Имя пользователя
+std::string _realname;      // Реальное имя (из USER)
 bool _hasPassword;          // Пароль введен
-bool _hasNickname;          // Никнейм установлен
-bool _hasUsername;          // Username установлен
 bool _registered;           // Регистрация завершена
+bool _pendingDisconnect;    // Ожидает отключения (graceful)
 ```
 
 ### 3. Channel (класс канала)

@@ -30,8 +30,8 @@ public:
     const std::string& getOutputBuffer() const;
     bool isRegistered() const;
     bool hasPassword() const;
-    bool hasNickname() const;
-    bool hasUsername() const;
+    bool isPendingDisconnect() const;
+    std::string getDisplayNick() const;  // Returns nickname or "*" for IRC replies
 
     // Setters
     void setNickname(const std::string& nick);
@@ -39,6 +39,7 @@ public:
     void setRealname(const std::string& realname);
     void setPassword(bool hasPass);
     void setRegistered(bool registered);
+    void setPendingDisconnect(bool pending);
     
     // Buffer operations
     void appendToInput(const std::string& data);
@@ -55,9 +56,8 @@ private:
     std::string _username;
     std::string _realname;
     bool        _hasPassword;
-    bool        _hasNickname;
-    bool        _hasUsername;
     bool        _registered;
+    bool        _pendingDisconnect;
 };
 
 #endif // CLIENT_HPP

@@ -1,29 +1,20 @@
 #include "Client.hpp"
 
-// Orthodox Canonical Form
+// ============================================================================
+// ORTHODOX CANONICAL FORM
+// ============================================================================
+
 Client::Client() 
     : _fd(-1),
-      _inputBuffer(),
-      _outputBuffer(),
-      _nickname(),
-      _username(),
-      _realname(),
       _hasPassword(false),
-      _hasNickname(false),
-      _hasUsername(false),
-      _registered(false) {}
+      _registered(false),
+      _pendingDisconnect(false) {}
 
 Client::Client(int fd)
     : _fd(fd),
-      _inputBuffer(),
-      _outputBuffer(),
-      _nickname(),
-      _username(),
-      _realname(),
       _hasPassword(false),
-      _hasNickname(false),
-      _hasUsername(false),
-      _registered(false) {}
+      _registered(false),
+      _pendingDisconnect(false) {}
 
 Client::Client(const Client& other)
     : _fd(other._fd),
@@ -33,9 +24,8 @@ Client::Client(const Client& other)
       _username(other._username),
       _realname(other._realname),
       _hasPassword(other._hasPassword),
-      _hasNickname(other._hasNickname),
-      _hasUsername(other._hasUsername),
-      _registered(other._registered) {}
+      _registered(other._registered),
+      _pendingDisconnect(other._pendingDisconnect) {}
 
 Client& Client::operator=(const Client& other) {
     if (this != &other) {
@@ -46,16 +36,18 @@ Client& Client::operator=(const Client& other) {
         _username = other._username;
         _realname = other._realname;
         _hasPassword = other._hasPassword;
-        _hasNickname = other._hasNickname;
-        _hasUsername = other._hasUsername;
         _registered = other._registered;
+        _pendingDisconnect = other._pendingDisconnect;
     }
     return *this;
 }
 
 Client::~Client() {}
 
-// Getters
+// ============================================================================
+// GETTERS
+// ============================================================================
+
 int Client::getFd() const { return _fd; }
 const std::string& Client::getNickname() const { return _nickname; }
 const std::string& Client::getUsername() const { return _username; }
@@ -66,48 +58,31 @@ std::string& Client::getOutputBuffer() { return _outputBuffer; }
 
 bool Client::isRegistered() const { return _registered; }
 bool Client::hasPassword() const { return _hasPassword; }
-bool Client::hasNickname() const { return _hasNickname; }
-bool Client::hasUsername() const { return _hasUsername; }
+bool Client::isPendingDisconnect() const { return _pendingDisconnect; }
 
-// Setters
-void Client::setNickname(const std::string& nick) {
-    _nickname = nick;
-    _hasNickname = true;
+std::string Client::getDisplayNick() const {
+    return _nickname.empty() ? "*" : _nickname;
 }
 
-void Client::setUsername(const std::string& user) {
-    _username = user;
-    _hasUsername = true;
-}
+// ============================================================================
+// SETTERS
+// ============================================================================
 
-void Client::setRealname(const std::string& realname) {
-    _realname = realname;
-}
+void Client::setNickname(const std::string& nick) { _nickname = nick; }
+void Client::setUsername(const std::string& user) { _username = user; }
+void Client::setRealname(const std::string& realname) { _realname = realname; }
+void Client::setPassword(bool hasPass) { _hasPassword = hasPass; }
+void Client::setRegistered(bool registered) { _registered = registered; }
+void Client::setPendingDisconnect(bool pending) { _pendingDisconnect = pending; }
 
-void Client::setPassword(bool hasPass) {
-    _hasPassword = hasPass;
-}
+// ============================================================================
+// BUFFER OPERATIONS
+// ============================================================================
 
-void Client::setRegistered(bool registered) {
-    _registered = registered;
-}
-
-// Buffer operations
-void Client::appendToInput(const std::string& data) {
-    _inputBuffer += data;
-}
-
-void Client::appendToOutput(const std::string& data) {
-    _outputBuffer += data;
-}
-
-void Client::clearInputBuffer() {
-    _inputBuffer.clear();
-}
-
-void Client::clearOutputBuffer() {
-    _outputBuffer.clear();
-}
+void Client::appendToInput(const std::string& data) { _inputBuffer += data; }
+void Client::appendToOutput(const std::string& data) { _outputBuffer += data; }
+void Client::clearInputBuffer() { _inputBuffer.clear(); }
+void Client::clearOutputBuffer() { _outputBuffer.clear(); }
 
 std::string Client::extractLine() {
     std::string::size_type pos = _inputBuffer.find('\n');
@@ -117,7 +92,7 @@ std::string Client::extractLine() {
     std::string line = _inputBuffer.substr(0, pos);
     _inputBuffer.erase(0, pos + 1);
     
-    // Remove \r if present
+    // Remove trailing \r if present (IRC uses \r\n)
     if (!line.empty() && line[line.size() - 1] == '\r')
         line.erase(line.size() - 1);
     
