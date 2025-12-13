@@ -32,13 +32,14 @@ public:
     void run();
 
 private:
-    // Network operations (students implement)
+    // Network operations
     void initSocket();
     void setNonBlocking(int fd);
     void acceptClient();
     void handleClient(size_t index);
     void readFromClient(Client& client);
     void writeToClient(Client& client);
+    void flushClientOutput(Client& client);
     void removeClient(int fd);
 
 

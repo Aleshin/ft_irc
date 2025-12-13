@@ -123,45 +123,51 @@ void Server::run() {
         std::vector<int> fdsToRemove;
         
         while (true) {
-            // poll() ждет события, -1 = бесконечно
             int ret = poll(&_pollfds[0], _pollfds.size(), -1);
             if (ret < 0)
                 throw std::runtime_error("poll() failed: " + std::string(strerror(errno)));
 
-            // Обратный цикл для безопасного удаления во время итерации
             for (size_t i = _pollfds.size(); i > 0; --i) {
                 size_t index = i - 1;
-                const int fd = _pollfds[index].fd;
-                const short revents = _pollfds[index].revents;
+                int fd = _pollfds[index].fd;
+                short revents = _pollfds[index].revents;
+                
+                if (fd == _serverFd) {
+                    if (revents & POLLIN)
+                        acceptClient();
+                    continue;
+                }
 
-                if (revents & POLLIN) {
+                Client* client = _clients.count(fd) ? _clients[fd] : NULL;
+                if (!client)
+                    continue;
+
+                // Handle write first (send pending data before reading more)
+                if (revents & POLLOUT) {
                     try {
-                        if (fd == _serverFd)
-                            acceptClient();
-                        else
-                            handleClient(index);
-                    } catch (const std::exception &e) {
-                        std::cerr << "Error on fd " << fd << ": " << e.what() << std::endl;
+                        flushClientOutput(*client);
+                    } catch (...) {
                         fdsToRemove.push_back(fd);
+                        continue;
                     }
                 }
 
-                if (revents & POLLOUT && fd != _serverFd) {
+                // Handle read (skip if pending disconnect)
+                if ((revents & POLLIN) && !client->isPendingDisconnect()) {
                     try {
-                        Client* client = _clients[fd];
-                        if (client && !client->getOutputBuffer().empty()) {
-                            writeToClient(*client);
-                            if (client->getOutputBuffer().empty())
-                                updatePollEvents(fd, POLLIN);
-                        }
+                        handleClient(index);
                     } catch (const std::exception &e) {
                         std::cerr << "Error on fd " << fd << ": " << e.what() << std::endl;
                         fdsToRemove.push_back(fd);
+                        continue;
                     }
                 }
+
+                // Check if client should be removed
+                if (client->isPendingDisconnect() && client->getOutputBuffer().empty())
+                    fdsToRemove.push_back(fd);
             }
 
-            // Отложенное удаление
             for (size_t i = 0; i < fdsToRemove.size(); ++i)
                 removeClient(fdsToRemove[i]);
             fdsToRemove.clear();
@@ -262,12 +268,9 @@ void Server::handleClient(size_t index) {
 
     readFromClient(*client);
 
-    // Извлечение и обработка IRC команд (разделитель \r\n)
-    while (true) {
-        std::string line = client->extractLine();
-        if (line.empty())
-            break;
-        
+    // Process complete IRC commands
+    std::string line;
+    while (!(line = client->extractLine()).empty()) {
         try {
             processCommand(*client, line);
         } catch (const std::exception& e) {
@@ -275,9 +278,26 @@ void Server::handleClient(size_t index) {
         }
     }
 
-    // Включаем POLLOUT если есть данные для отправки
-    if (!client->getOutputBuffer().empty())
-        updatePollEvents(fd, POLLIN | POLLOUT);
+    // Try immediate send, fall back to POLLOUT for remaining data
+    flushClientOutput(*client);
+}
+
+void Server::flushClientOutput(Client& client) {
+    if (client.getOutputBuffer().empty())
+        return;
+
+    try {
+        writeToClient(client);
+    } catch (const std::exception& e) {
+        std::cerr << "Write error: " << e.what() << std::endl;
+        throw;
+    }
+
+    // Update poll events based on buffer state
+    if (client.getOutputBuffer().empty())
+        updatePollEvents(client.getFd(), POLLIN);
+    else
+        updatePollEvents(client.getFd(), POLLIN | POLLOUT);
 }
 
 void Server::readFromClient(Client& client) {
@@ -285,8 +305,11 @@ void Server::readFromClient(Client& client) {
     ssize_t n = recv(client.getFd(), buf, sizeof(buf) - 1, 0);
 
     if (n == 0) {
-        std::cout << "Client fd " << client.getFd() << " disconnected" << std::endl;
-        throw std::runtime_error("client disconnected");
+        // Client closed connection - mark for delayed removal
+        // This allows us to send any pending data first
+        std::cout << "Client fd " << client.getFd() << " closed connection" << std::endl;
+        client.setPendingDisconnect(true);
+        return;
     }
 
     if (n < 0) {
@@ -337,20 +360,13 @@ void Server::removeClient(int fd) {
 }
 
 // ============================================================================
-// IRC PROTOCOL - Phase 2: Parsing & Validation
+// IRC PROTOCOL - Command Processing
 // ============================================================================
 
 void Server::processCommand(Client& client, const std::string& line) {
-    std::cout << "[DEBUG] Processing command from fd " << client.getFd() 
-              << ": " << line << std::endl;
-
-    // Parse the IRC message using Message class
     Message msg = Message::parse(line);
-
-    if (!msg.isValid()) {
-        std::cerr << "[ERROR] Invalid message format" << std::endl;
+    if (!msg.isValid())
         return;
-    }
 
     const std::string& cmd = msg.getCommand();
     
@@ -380,14 +396,13 @@ void Server::processCommand(Client& client, const std::string& line) {
         removeClient(client.getFd());
     } else {
         // Unknown command
-        std::string nick = client.getNickname().empty() ? "*" : client.getNickname();
-        sendToClient(client, Message::replyParam(ERR_UNKNOWNCOMMAND, nick, cmd, 
-                                                  "Unknown command").serialize());
+        sendToClient(client, Message::replyParam(ERR_UNKNOWNCOMMAND, 
+                      client.getDisplayNick(), cmd, "Unknown command").serialize());
     }
 }
 
 void Server::handlePass(Client& client, const Message& msg) {
-    std::string nick = client.getNickname().empty() ? "*" : client.getNickname();
+    const std::string& nick = client.getDisplayNick();
     
     if (msg.getParams().empty()) {
         sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick, 
@@ -402,14 +417,18 @@ void Server::handlePass(Client& client, const Message& msg) {
     }
 
     std::string password = msg.getParams()[0];
-    std::cout << "[DEBUG] Password set for client fd " << client.getFd() << std::endl;
     
-    // Phase 3 will validate against server password
-    (void)password;
+    if (password != _password) {
+        sendToClient(client, Message::reply(ERR_PASSWDMISMATCH, nick, 
+                                             "Password incorrect").serialize());
+        return;
+    }
+
+    client.setPassword(true);
 }
 
 void Server::handleNick(Client& client, const Message& msg) {
-    std::string nick = client.getNickname().empty() ? "*" : client.getNickname();
+    const std::string& nick = client.getDisplayNick();
     
     if (msg.getParams().empty()) {
         sendToClient(client, Message::reply(ERR_NONICKNAMEGIVEN, nick, 
@@ -431,13 +450,22 @@ void Server::handleNick(Client& client, const Message& msg) {
         return;
     }
 
-    std::cout << "[DEBUG] Setting nickname: " << newNick << std::endl;
+    std::string oldNick = client.getNickname();
+    bool wasRegistered = client.isRegistered();
+    
     client.setNickname(newNick);
-    tryRegisterClient(client);
+    
+    if (wasRegistered) {
+        // Notify about nick change: :oldnick!user@host NICK :newnick
+        std::string prefix = oldNick + "!" + client.getUsername() + "@localhost";
+        sendToClient(client, Message::fromUser(prefix, "NICK", newNick).serialize());
+    } else {
+        tryRegisterClient(client);
+    }
 }
 
 void Server::handleUser(Client& client, const Message& msg) {
-    std::string nick = client.getNickname().empty() ? "*" : client.getNickname();
+    const std::string& nick = client.getDisplayNick();
     
     if (msg.getParams().size() < 3) {
         sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick, 
@@ -454,12 +482,9 @@ void Server::handleUser(Client& client, const Message& msg) {
     std::string username = msg.getParams()[0];
     std::string realname = msg.getTrailing();
 
-    if (!Message::isValidUser(username)) {
-        std::cerr << "[ERROR] Invalid username format: " << username << std::endl;
+    if (!Message::isValidUser(username))
         return;
-    }
 
-    std::cout << "[DEBUG] Setting user info: " << username << " (" << realname << ")" << std::endl;
     client.setUsername(username);
     client.setRealname(realname);
     tryRegisterClient(client);
@@ -500,14 +525,38 @@ void Server::handleMode(Client& client, const Message& msg) {
     (void)msg;
 }
 
-// Helper functions
+// ============================================================================
+// REGISTRATION HELPERS
+// ============================================================================
+
 void Server::tryRegisterClient(Client& client) {
-    (void)client;
+    // All three conditions must be met: password, nickname, and username
+    if (!client.hasPassword() || client.getNickname().empty() || 
+        client.getUsername().empty() || client.isRegistered())
+        return;
+
+    client.setRegistered(true);
+    std::cout << "Client " << client.getNickname() << " registered" << std::endl;
+
+    // Send welcome sequence (001-004)
+    const std::string& nick = client.getNickname();
+    const std::string& user = client.getUsername();
+
+    sendToClient(client, Message::reply(RPL_WELCOME, nick,
+        "Welcome to the Internet Relay Network " + nick + "!" + user + "@localhost").serialize());
+    
+    sendToClient(client, Message::reply(RPL_YOURHOST, nick,
+        "Your host is " + _serverName + ", running version 1.0").serialize());
+    
+    sendToClient(client, Message::reply(RPL_CREATED, nick,
+        "This server was created today").serialize());
+    
+    sendToClient(client, Message::replyParam(RPL_MYINFO, nick,
+        _serverName + " 1.0 o itkol", "").serialize());
 }
 
 void Server::sendToClient(Client& client, const std::string& message) {
-    (void)client;
-    (void)message;
+    client.appendToOutput(message);
 }
 
 void Server::broadcastToChannel(const std::string& channelName,
