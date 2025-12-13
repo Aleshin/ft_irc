@@ -103,11 +103,19 @@ stress: compile
 valgrind: compile
 	@echo "$(BLUE)Running valgrind check...$(NC)"
 	@if command -v valgrind >/dev/null 2>&1; then \
-		timeout 5 valgrind --leak-check=full --error-exitcode=1 \
+		valgrind --leak-check=full --error-exitcode=1 \
 			--log-file=/tmp/valgrind_full.log \
-			$(PROJECT_DIR)/ircserv 6667 test || \
-			(echo "$(RED)✗ Valgrind check failed$(NC)" && cat /tmp/valgrind_full.log && exit 1); \
-		echo "$(GREEN)✓ Valgrind check passed$(NC)"; \
+			$(PROJECT_DIR)/ircserv 6667 test & \
+		sleep 3; \
+		kill $$! 2>/dev/null || true; \
+		wait $$! 2>/dev/null || true; \
+		if grep -q "ERROR SUMMARY: 0 errors" /tmp/valgrind_full.log; then \
+			echo "$(GREEN)✓ Valgrind check passed$(NC)"; \
+		else \
+			echo "$(RED)✗ Valgrind check failed$(NC)"; \
+			cat /tmp/valgrind_full.log; \
+			exit 1; \
+		fi; \
 	else \
 		echo "$(YELLOW)⊘ valgrind not installed$(NC)"; \
 	fi

@@ -47,7 +47,8 @@ test_server_starts() {
     
     local port=$(random_port)
     
-    timeout 3 ./ircserv $port password > /tmp/test_start.log 2>&1 &
+    # Запускаем сервер в фоне
+    ./ircserv $port password > /tmp/test_start.log 2>&1 &
     local pid=$!
     sleep 1
     
@@ -169,13 +170,39 @@ test_multiple_clients() {
     local pid=$!
     sleep 1
     
-    # Подключаем 5 клиентов одновременно
+    # Подключаем 5 клиентов одновременно (в фоне)
+    local client_pids=()
     for i in {1..5}; do
         (echo "CLIENT $i" | nc -w 1 localhost $port > /dev/null 2>&1) &
+        client_pids+=($!)
     done
     
-    wait
-    sleep 1
+    # Ждем завершения клиентов с таймаутом
+    local timeout=5
+    local elapsed=0
+    while [ $elapsed -lt $timeout ]; do
+        local all_done=true
+        for cpid in "${client_pids[@]}"; do
+            if kill -0 $cpid 2>/dev/null; then
+                all_done=false
+                break
+            fi
+        done
+        
+        if [ "$all_done" = true ]; then
+            break
+        fi
+        
+        sleep 0.5
+        ((elapsed++))
+    done
+    
+    # Убиваем зависшие клиенты если есть
+    for cpid in "${client_pids[@]}"; do
+        kill -9 $cpid 2>/dev/null || true
+    done
+    
+    sleep 0.5
     
     # Сервер должен быть жив
     if kill -0 $pid 2>/dev/null; then
@@ -203,7 +230,7 @@ test_no_memory_leaks() {
     local port=$(random_port)
     
     # Запускаем под valgrind
-    timeout 5 valgrind --leak-check=full --error-exitcode=1 --log-file=/tmp/valgrind.log \
+    valgrind --leak-check=full --error-exitcode=1 --log-file=/tmp/valgrind.log \
         ./ircserv $port password > /dev/null 2>&1 &
     local pid=$!
     sleep 2
@@ -214,6 +241,8 @@ test_no_memory_leaks() {
         sleep 0.5
     done
     
+    # Даем серверу 3 секунды на обработку, потом убиваем
+    sleep 1
     kill $pid 2>/dev/null
     wait $pid 2>/dev/null
     

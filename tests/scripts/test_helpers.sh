@@ -171,5 +171,37 @@ print_system_info() {
     echo "Date: $(date)"
     echo "Working Directory: $(pwd)"
     echo "User: $(whoami)"
+    
+    # Проверка наличия необходимых утилит
+    if ! command -v nc &> /dev/null; then
+        echo -e "${RED}WARNING: netcat (nc) not found!${NC}"
+    fi
+    
     echo
+}
+
+# Функция для определения флагов netcat (macOS vs Linux)
+get_nc_flags() {
+    # На macOS: nc -w timeout
+    # На Linux (GNU netcat): nc -w timeout или nc -q 0
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "-w"
+    else
+        # Проверяем версию netcat
+        if nc -h 2>&1 | grep -q "GNU"; then
+            echo "-q 0 -w"
+        else
+            echo "-w"
+        fi
+    fi
+}
+
+# Улучшенная функция для отправки команд с учетом платформы
+send_irc_command_safe() {
+    local command="$1"
+    local port=${2:-$DEFAULT_PORT}
+    local timeout=${3:-2}
+    
+    local nc_flags=$(get_nc_flags)
+    echo -e "${command}\r\n" | nc $nc_flags $timeout localhost $port 2>&1
 }
