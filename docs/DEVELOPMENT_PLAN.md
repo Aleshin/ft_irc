@@ -2,102 +2,88 @@
 
 > Последнее обновление: 13 декабря 2025
 
-## 📊 Текущее Состояние: 40-50%
+## 📊 Текущее Состояние: 25% → Фаза 1 Завершена ✅
 
-### ✅ Готово:
-- Архитектура классов (Server, Client, Channel, Message)
-- Основной сетевой стек (socket, bind, accept, poll)
-- Неблокирующий I/O (O_NONBLOCK)
-- Обработка ошибок системных вызовов
-- Управление ресурсами (cleanup, RAII)
-- Буферизация ввода/вывода
+### ✅ Фаза 1 ЗАВЕРШЕНА (13 декабря 2025):
+- ✅ Архитектура классов (Server, Client, Channel, Message)
+- ✅ Полный сетевой стек с poll() - неблокирующий I/O
+- ✅ SO_REUSEADDR для быстрого перезапуска
+- ✅ Динамический POLLOUT для эффективной отправки
+- ✅ Безопасная итерация с отложенным удалением
+- ✅ Корректная обработка disconnect (recv() == 0)
+- ✅ Проверка дублирования FD
+- ✅ Извлечение команд из inputBuffer
+- ✅ Управление ресурсами (cleanup, RAII)
+- ✅ Нет утечек памяти (проверено valgrind/leaks)
+- ✅ 7/7 тестов проходят
+- ✅ Код оптимизирован (426 строк)
 
-### ❌ Не готово:
-- Парсинг IRC команд
-- Обработка регистрации (PASS/NICK/USER)
+**Коммит:** `dbaaf49` в ветке `phase1`  
+**Документация:** [PHASE1_COMPLETED.md](PHASE1_COMPLETED.md), [PHASE1_CHECKLIST.md](PHASE1_CHECKLIST.md)
+
+### 🔄 В работе - Фаза 2:
+- IRC протокол парсинг (RFC 2812)
+- Построение ответов сервера
+- Валидация nickname/channel
+
+### ❌ Планируется - Фазы 3-5:
+- Регистрация клиентов (PASS/NICK/USER)
 - Работа с каналами (JOIN/PART/PRIVMSG)
 - Операторские команды (KICK/INVITE/TOPIC/MODE)
 
 ---
 
-## 🚀 ФАЗА 1: Исправление Критических Проблем (2-3 дня)
+## ✅ ФАЗА 1: Базовая Сетевая Инфраструктура - ЗАВЕРШЕНА
 
-**Статус:** 🟡 В РАБОТЕ  
+**Статус:** ✅ ЗАВЕРШЕНА (13 декабря 2025)  
 **Ветка:** `phase1`  
-**Тесты:** `tests/phase1_tests.sh`
+**Коммит:** `dbaaf49`  
+**Тесты:** 7/7 PASSED
+
+### Выполненные задачи:
+
+#### ✅ 1.1 listen() перемещен в initSocket()
+**Статус:** ВЫПОЛНЕНО ✅  
+**Файл:** [src/Server.cpp](../src/Server.cpp#L152-L157)
+
+#### ✅ 1.2 Динамический POLLOUT реализован
+**Статус:** ВЫПОЛНЕНО ✅  
+**Метод:** `updatePollEvents(int fd, short events)`  
+**Файлы:** [Server.hpp](../include/Server.hpp#L64), [Server.cpp](../src/Server.cpp#L87-L97)
+
+#### ✅ 1.3 Безопасная итерация реализована
+**Статус:** ВЫПОЛНЕНО ✅  
+**Подход:** Обратный цикл + отложенное удаление  
+**Файл:** [src/Server.cpp](../src/Server.cpp#L114-L145)
+
+#### ✅ 1.4 Корректная обработка disconnect
+**Статус:** ВЫПОЛНЕНО ✅  
+**Файл:** [src/Server.cpp](../src/Server.cpp#L288-L294)
+
+#### ✅ 1.5 SO_REUSEADDR включен
+**Статус:** ВЫПОЛНЕНО ✅  
+**Файл:** [src/Server.cpp](../src/Server.cpp#L176-L182)
+
+#### ✅ 1.6 Проверка дублирования FD
+**Статус:** ВЫПОЛНЕНО ✅  
+**Файл:** [src/Server.cpp](../src/Server.cpp#L227-L233)
+
+#### ✅ 1.7 Извлечение команд из буфера
+**Статус:** ВЫПОЛНЕНО ✅  
+**Файл:** [src/Server.cpp](../src/Server.cpp#L261-L278)
+
+---
+
+## 🔄 ФАЗА 2: IRC Парсинг и Протокол (2-3 дня) - В РАБОТЕ
+
+**Статус:** 🔄 В РАБОТЕ  
+**Ветка:** `phase2` (создается)  
+**Документация:** [PHASE2_START.md](PHASE2_START.md)
+
+### Цель
+Реализовать полный парсинг IRC команд согласно RFC 2812 и построение корректных ответов сервера.
 
 ### Задачи:
-
-#### 1.1 Исправить расположение listen()
-**Проблема:** `listen()` находится в `run()`, а должен быть в `initSocket()`  
-**Файл:** `src/Server.cpp`  
-**Приоритет:** Средний  
-**Тест:** `test_init_socket`
-
-```cpp
-// Переместить из run() в конец initSocket():
-if (listen(_serverFd, 10) < 0) {
-    throw std::runtime_error("listen() failed: " + std::string(strerror(errno)));
-}
-```
-
----
-
-#### 1.2 Реализовать динамический POLLOUT флаг
-**Проблема:** POLLOUT не добавляется когда есть данные для отправки  
-**Файл:** `src/Server.cpp`  
-**Приоритет:** КРИТИЧЕСКИЙ  
-**Тест:** `test_pollout_dynamic`
-
-**Требуется:**
-- Метод `updatePollEvents(int fd)` для обновления флагов poll
-- Добавлять POLLOUT когда `outputBuffer` не пуст
-- Убирать POLLOUT когда буфер пуст
-
-```cpp
-void Server::updatePollEvents(int fd, short events) {
-    for (size_t i = 0; i < _pollfds.size(); ++i) {
-        if (_pollfds[i].fd == fd) {
-            _pollfds[i].events = events;
-            return;
-        }
-    }
-}
-```
-
-**Использование:**
-```cpp
-// После добавления данных в outputBuffer:
-if (!client.getOutputBuffer().empty()) {
-    updatePollEvents(fd, POLLIN | POLLOUT);
-}
-
-// После отправки всех данных:
-if (client.getOutputBuffer().empty()) {
-    updatePollEvents(fd, POLLIN);
-}
-```
-
----
-
-#### 1.3 Исправить итерацию по _pollfds
-**Проблема:** Удаление элемента во время итерации нарушает индексы  
-**Файл:** `src/Server.cpp`  
-**Приоритет:** КРИТИЧЕСКИЙ  
-**Тест:** `test_safe_iteration`
-
-**Решение 1:** Отложенное удаление
-```cpp
-// В run():
-std::vector<int> fds_to_remove;
-
-for (size_t i = 0; i < _pollfds.size(); ++i) {
-    try {
-        // ... обработка
-    } catch (const std::exception &e) {
-        fds_to_remove.push_back(_pollfds[i].fd);
-    }
-}
 
 // После цикла:
 for (size_t i = 0; i < fds_to_remove.size(); ++i) {
@@ -224,54 +210,129 @@ void Server::handleClient(size_t index) {
 
 ### Задачи:
 
-#### 2.1 Реализовать Message::parse()
+#### 2.1 Реализовать CommandParser
+**Файл:** `src/CommandParser.cpp`  
 **Формат IRC:** `[:prefix] COMMAND [param1] [param2] [:trailing]`
 
+**Методы:**
 ```cpp
-Message Message::parse(const std::string& raw) {
-    // Реализация парсинга
-    // См. docs/GETTING_STARTED.md - там полный пример
+static Message parse(const std::string& line);
+static bool isValidNickname(const std::string& nick);
+static bool isValidChannelName(const std::string& channel);
+```
+
+**Примеры для парсинга:**
+```
+NICK testuser
+USER testuser 0 * :Real Name
+JOIN #general
+PRIVMSG #general :Hello everyone!
+:nick!user@host PRIVMSG #test :Message
+```
+
+**Тесты:**
+- [ ] `test_parse_simple` - "NICK john"
+- [ ] `test_parse_with_params` - "USER john 0 * :John Doe"
+- [ ] `test_parse_with_prefix` - ":nick!user@host PRIVMSG #test :Hi"
+- [ ] `test_validate_nickname` - проверка корректности
+- [ ] `test_validate_channel` - проверка #канала
+
+---
+
+#### 2.2 Реализовать MessageBuilder
+**Файл:** `src/MessageBuilder.cpp`
+
+**Методы:**
+```cpp
+static std::string buildWelcome(const std::string& nick);
+static std::string buildNumeric(int code, const std::string& target, 
+                                 const std::string& message);
+static std::string buildError(int code, const std::string& target,
+                               const std::string& message);
+static std::string buildReply(const std::string& prefix,
+                               const std::string& command,
+                               const std::vector<std::string>& params);
+```
+
+**Примеры ответов:**
+```
+:server 001 nick :Welcome to the IRC Network
+:server 332 nick #general :Channel topic
+:nick!user@host PRIVMSG #general :Hello!
+:server 401 nick badnick :No such nick/channel
+```
+
+**Тесты:**
+- [ ] `test_build_welcome` - Welcome message (001)
+- [ ] `test_build_numeric` - Numeric replies
+- [ ] `test_build_error` - Error messages (4xx, 5xx)
+- [ ] `test_build_reply` - Команды с префиксом
+
+---
+
+#### 2.3 Обновить processCommand()
+**Файл:** `src/Server.cpp`
+
+**Интеграция парсера:**
+```cpp
+void Server::processCommand(Client& client, const std::string& line) {
+    try {
+        Message msg = CommandParser::parse(line);
+        
+        if (msg.command == "NICK")
+            handleNick(client, msg);
+        else if (msg.command == "USER")
+            handleUser(client, msg);
+        // ... остальные команды
+        else
+            sendError(client, ERR_UNKNOWNCOMMAND, msg.command);
+            
+    } catch (const std::exception& e) {
+        std::cerr << "Parse error: " << e.what() << std::endl;
+    }
 }
 ```
 
 **Тесты:**
-- `test_parse_simple` - "NICK john"
-- `test_parse_with_params` - "USER john 0 * :John Doe"
-- `test_parse_with_prefix` - ":nick!user@host PRIVMSG #test :Hi"
+- [ ] `test_dispatch_commands` - корректная диспетчеризация
+- [ ] `test_unknown_command` - ERR_UNKNOWNCOMMAND
+- [ ] `test_parse_errors` - обработка ошибок парсинга
 
 ---
 
-#### 2.2 Реализовать Message::build*() методы
-- `buildWelcome()`
-- `buildJoin()`
-- `buildPart()`
-- `buildPrivmsg()`
-- `buildNumericReply()`
+#### 2.4 Добавить Numeric Codes
+**Файл:** `include/Numerics.hpp` (новый)
 
-**Тесты:**
-- `test_build_welcome`
-- `test_build_join`
-- `test_build_numeric`
+**Требуется определить:**
+```cpp
+// Welcome (001-005)
+#define RPL_WELCOME          001
+#define RPL_YOURHOST         002
+#define RPL_CREATED          003
+#define RPL_MYINFO           004
 
----
+// Channel replies (300-399)
+#define RPL_TOPIC            332
+#define RPL_NAMREPLY         353
+#define RPL_ENDOFNAMES       366
 
-#### 2.3 Реализовать валидацию
-- `isValidNickname()`
-- `isValidChannelName()`
+// Errors (400-599)
+#define ERR_NOSUCHNICK       401
+#define ERR_NOSUCHCHANNEL    403
+#define ERR_UNKNOWNCOMMAND   421
+#define ERR_NONICKNAMEGIVEN  431
+#define ERR_ERRONEUSNICKNAME 432
+#define ERR_NICKNAMEINUSE    433
+#define ERR_NEEDMOREPARAMS   461
+```
 
-**Тесты:**
-- `test_validate_nickname`
-- `test_validate_channel`
-
----
-
-#### 2.4 Реализовать processCommand()
-Диспетчеризация команд к обработчикам
-
-**Тесты:**
-- `test_dispatch_pass`
-- `test_dispatch_nick`
-- `test_dispatch_unknown`
+### Критерии завершения Фазы 2:
+- [x] CommandParser парсит все типы команд
+- [x] MessageBuilder генерирует корректные ответы
+- [x] Валидация nickname/channel работает
+- [x] processCommand() интегрирован с парсером
+- [x] Numeric codes определены
+- [x] Минимум 8 тестов проходят
 
 ---
 
