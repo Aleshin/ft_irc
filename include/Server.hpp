@@ -37,9 +37,8 @@ private:
     void setNonBlocking(int fd);
     void acceptClient();
     void handleClient(size_t index);
-    void readFromClient(Client& client, size_t index);
+    void readFromClient(Client& client);
     void writeToClient(Client& client);
-   // void removeClient(size_t index);
     void removeClient(int fd);
 
 
@@ -59,6 +58,7 @@ private:
     // Helpers
     void tryRegisterClient(Client& client);
     void addPollFd(int fd, short events);
+    void updatePollEvents(int fd, short events);  // NEW: Phase 1.2
     void sendToClient(Client& client, const std::string& message);
     void broadcastToChannel(const std::string& channelName, 
                            const std::string& message, 

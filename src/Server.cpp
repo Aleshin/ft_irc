@@ -7,7 +7,14 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-// Orthodox Canonical Form
+// Константы
+static const size_t BUFFER_SIZE = 1024;
+static const int LISTEN_BACKLOG = 10;
+
+// ============================================================================
+// ORTHODOX CANONICAL FORM
+// ============================================================================
+
 Server::Server()
     : _port(6667),
       _password(),
@@ -52,139 +59,168 @@ Server::~Server() {
     cleanup();
 }
 
-void Server::cleanup(){
+// ============================================================================
+// RESOURCE MANAGEMENT
+// ============================================================================
+
+void Server::cleanup() {
+    // Закрываем всех клиентов
     for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
         close(it->first);
         delete it->second;
     }
+    _clients.clear();
     
-    // Delete all channels
+    // Удаляем каналы
     for (std::map<std::string, Channel*>::iterator it = _channels.begin(); it != _channels.end(); ++it) {
         delete it->second;
     }
+    _channels.clear();
     
-    // Close server socket
-    if (_serverFd >= 0)
+    // Закрываем серверный сокет
+    if (_serverFd >= 0) {
         close(_serverFd);
+        _serverFd = -1;
+    }
+    
+    _pollfds.clear();
 }
+
+// ============================================================================
+// POLL MANAGEMENT
+// ============================================================================
+// poll() мультиплексирует I/O: следит за множеством FD одновременно
 
 void Server::addPollFd(int fd, short events) {
     struct pollfd pfd;
     pfd.fd = fd;
     pfd.events = events;
     pfd.revents = 0;
-
     _pollfds.push_back(pfd);
 }
 
-// Main entry point
+// Динамическое обновление POLLOUT для управления отправкой
+void Server::updatePollEvents(int fd, short events) {
+    for (size_t i = 0; i < _pollfds.size(); ++i) {
+        if (_pollfds[i].fd == fd) {
+            _pollfds[i].events = events;
+            return;
+        }
+    }
+}
+
+// ============================================================================
+// MAIN EVENT LOOP
+// ============================================================================
+
 void Server::run() {
     try {
         initSocket();
         addPollFd(_serverFd, POLLIN);
-        // 10 maximum pending clients
-        if (listen(_serverFd, 10) < 0) {
-            throw std::runtime_error(
-                "listen() failed: " + std::string(strerror(errno))
-            );
-        }
         std::cout << "Server listening on port " << _port << std::endl;
 
-        // Main event loop
+        std::vector<int> fdsToRemove;
+        
         while (true) {
+            // poll() ждет события, -1 = бесконечно
             int ret = poll(&_pollfds[0], _pollfds.size(), -1);
-            if (ret < 0) {
+            if (ret < 0)
                 throw std::runtime_error("poll() failed: " + std::string(strerror(errno)));
-            }
 
-            for (size_t i = 0; i < _pollfds.size(); ++i) {
-                const int fd = _pollfds[i].fd;
+            // Обратный цикл для безопасного удаления во время итерации
+            for (size_t i = _pollfds.size(); i > 0; --i) {
+                size_t index = i - 1;
+                const int fd = _pollfds[index].fd;
+                const short revents = _pollfds[index].revents;
 
-                // Read events
-                if (_pollfds[i].revents & POLLIN) {
+                if (revents & POLLIN) {
                     try {
-                        if (fd == _serverFd) {
-                            acceptClient();     // may throw
-                        } else {
-                            handleClient(i);    // may throw
+                        if (fd == _serverFd)
+                            acceptClient();
+                        else
+                            handleClient(index);
+                    } catch (const std::exception &e) {
+                        std::cerr << "Error on fd " << fd << ": " << e.what() << std::endl;
+                        fdsToRemove.push_back(fd);
+                    }
+                }
+
+                if (revents & POLLOUT && fd != _serverFd) {
+                    try {
+                        Client* client = _clients[fd];
+                        if (client && !client->getOutputBuffer().empty()) {
+                            writeToClient(*client);
+                            if (client->getOutputBuffer().empty())
+                                updatePollEvents(fd, POLLIN);
                         }
                     } catch (const std::exception &e) {
-                        std::cerr << "Error handling POLLIN for fd "
-                                  << fd << ": " << e.what() << std::endl;
-
-                        removeClient(fd);       // ensure cleanup
-                    }
-                }
-
-                // Write events
-                if (_pollfds[i].revents & POLLOUT) {
-                    if (fd != _serverFd) {
-                        try {
-                            Client* client = _clients[fd];
-                            if (client) {
-                                writeToClient(*client);  // may throw
-                            }
-                        } catch (const std::exception &e) {
-                            std::cerr << "Error handling POLLOUT for fd "
-                                      << fd << ": " << e.what() << std::endl;
-
-                            removeClient(fd);
-                        }
+                        std::cerr << "Error on fd " << fd << ": " << e.what() << std::endl;
+                        fdsToRemove.push_back(fd);
                     }
                 }
             }
+
+            // Отложенное удаление
+            for (size_t i = 0; i < fdsToRemove.size(); ++i)
+                removeClient(fdsToRemove[i]);
+            fdsToRemove.clear();
         }
+    } catch (const std::exception &e) {
+        std::cerr << "Fatal error: " << e.what() << std::endl;
     }
-    catch (const std::exception &e) {
-        std::cerr << "Fatal server error: " << e.what() << std::endl;
-    }
-    // Server shuts down
     cleanup();
 }
 
+// ============================================================================
+// NETWORK INITIALIZATION
+// ============================================================================
 
-// Network operations (студенты реализуют детально)
 void Server::initSocket() {
-    //domain AF_INET for Ipv4 AF_INET6 for Ipv6
-    //type SOCK_STREAM for TCP
-    //protocol 0
+    // Создание TCP сокета (AF_INET=IPv4, SOCK_STREAM=TCP)
     _serverFd = socket(AF_INET, SOCK_STREAM, 0);
     if (_serverFd < 0)
-    {
         throw std::runtime_error("socket() failed: " + std::string(strerror(errno)));
-    }
+
+    // SO_REUSEADDR: быстрый перезапуск без "Address already in use"
+    int opt = 1;
+    if (setsockopt(_serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+        throw std::runtime_error("setsockopt() failed: " + std::string(strerror(errno)));
+
+    // Настройка адреса: любой интерфейс, указанный порт
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(_port); //Host To Network Short (Host → сеть, 16 бит)
+    addr.sin_port = htons(_port);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    //to reuse socket address in case of bind error NOT NECESSARY YET
-    // int opt = 1;
-    // if (setsockopt(_serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-    //     throw std::runtime_error("setsockopt(SO_REUSEADDR) failed: " +
-    //     std::string(strerror(errno)));
-    // }
 
-    if (bind(_serverFd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-    {
+    // Привязка к адресу
+    if (bind(_serverFd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(_serverFd);
         throw std::runtime_error("bind() failed: " + std::string(strerror(errno)));
     }
+
+    // Начало прослушивания
+    if (listen(_serverFd, LISTEN_BACKLOG) < 0) {
+        close(_serverFd);
+        throw std::runtime_error("listen() failed: " + std::string(strerror(errno)));
+    }
+
+    setNonBlocking(_serverFd);
 }
 
+// Неблокирующий режим: read/write возвращаются немедленно (могут вернуть EAGAIN)
 void Server::setNonBlocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0) {
-        throw std::runtime_error(
-            "fcntl(F_GETFL) failed: " + std::string(strerror(errno))
-        );
-    }
-    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-        throw std::runtime_error(
-            "fcntl(F_SETFL, O_NONBLOCK) failed: " + std::string(strerror(errno))
-        );
-    }
+    if (flags < 0)
+        throw std::runtime_error("fcntl(F_GETFL) failed: " + std::string(strerror(errno)));
+    
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+        throw std::runtime_error("fcntl(F_SETFL) failed: " + std::string(strerror(errno)));
 }
 
-//only establish connection, no checks yet
+// ============================================================================
+// CLIENT CONNECTION HANDLING
+// ============================================================================
+
 void Server::acceptClient() {
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
@@ -193,123 +229,117 @@ void Server::acceptClient() {
     if (new_fd < 0) {
         std::cerr << "accept() failed: " << strerror(errno) << std::endl;
         return;
-    } 
-    
+    }
+
+    // Проверка дубликатов (страховка)
+    if (_clients.count(new_fd)) {
+        std::cerr << "Warning: FD " << new_fd << " duplicate!" << std::endl;
+        delete _clients[new_fd];
+        _clients.erase(new_fd);
+    }
+
     try {
-        // 1. Set non-blocking
         setNonBlocking(new_fd);
+        addPollFd(new_fd, POLLIN);
+        _clients[new_fd] = new Client(new_fd);
+        std::cout << "Client connected: fd " << new_fd << std::endl;
+    } catch (const std::exception &e) {
+        std::cerr << "Error setting up client: " << e.what() << std::endl;
+        close(new_fd);
+        if (_clients.count(new_fd)) {
+            delete _clients[new_fd];
+            _clients.erase(new_fd);
+        }
     }
-    catch (const std::exception &e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        close(new_fd);                    // Clean up leaked fd
-        return;
-    }
-    // 2. Add new socket to pollfds
-    addPollFd(new_fd, POLLIN);
-
-    // 3. Create and store client Add to clients map (duplicate FD assumed impossible)
-    _clients[new_fd] = new Client(new_fd);
-
-    std::cout << "New client connected on fd " << new_fd << std::endl;
 }
-
 
 void Server::handleClient(size_t index) {
     int fd = _pollfds[index].fd;
     Client* client = _clients[fd];
-
     if (!client)
         return;
 
-    // 1. читаем
-    readFromClient(*client, 0);  // если ошибка → исключение → removeClient
+    readFromClient(*client);
 
-    // 2. обрабатываем строки
-    //processClientBuffer(*client);
-    client->appendToOutput("ECHO!\r\n"); //ТЕСТ!!
+    // Извлечение и обработка IRC команд (разделитель \r\n)
+    while (true) {
+        std::string line = client->extractLine();
+        if (line.empty())
+            break;
+        
+        try {
+            processCommand(*client, line);
+        } catch (const std::exception& e) {
+            std::cerr << "Command error: " << e.what() << std::endl;
+        }
+    }
 
-    // 3. записываем ответ
-    writeToClient(*client);
+    // Включаем POLLOUT если есть данные для отправки
+    if (!client->getOutputBuffer().empty())
+        updatePollEvents(fd, POLLIN | POLLOUT);
 }
 
-void Server::readFromClient(Client& client, size_t index) {
-    (void)index; //not shure if I need it
-
-    int fd = client.getFd();
-
-    char buf[1024];
-    ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
+void Server::readFromClient(Client& client) {
+    char buf[BUFFER_SIZE];
+    ssize_t n = recv(client.getFd(), buf, sizeof(buf) - 1, 0);
 
     if (n == 0) {
-        // Клиент закрыл соединение
+        std::cout << "Client fd " << client.getFd() << " disconnected" << std::endl;
         throw std::runtime_error("client disconnected");
     }
 
     if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            // временной ошибки нет — просто нечего читать, это НЕ ошибка
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
-        }
-        throw std::runtime_error(
-            std::string("recv() failed: ") + strerror(errno)
-        );
+        throw std::runtime_error("recv() failed: " + std::string(strerror(errno)));
     }
-    // добавляем прочитанные данные
+
     client.appendToInput(std::string(buf, n));
-    std::cout << "Buffer now: [" << client.getInputBuffer() << "]\n"; //TEST
 }
 
 void Server::writeToClient(Client& client) {
-    int fd = client.getFd();
     std::string& out = client.getOutputBuffer();
-
-    // Если нечего отправлять — сразу выходим
     if (out.empty())
         return;
 
-    ssize_t n = send(fd,
-                     out.data(),
-                     out.size(),
-                     0);
+    ssize_t n = send(client.getFd(), out.data(), out.size(), 0);
 
     if (n < 0) {
-        // Временная невозможность записи — это НЕ ошибка
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
-
-        // Настоящая ошибка
-        throw std::runtime_error(
-            std::string("send() failed: ") + strerror(errno)
-        );
+        throw std::runtime_error("send() failed: " + std::string(strerror(errno)));
     }
 
-    // Если отправили часть — удаляем её из буфера
-    out.erase(0, n);
+    out.erase(0, static_cast<size_t>(n));
 }
 
-void Server::removeClient(int fd) { //TO DO пока одна функция при сбое и при штатном отключении
-    close(fd);  // close socket
+// ============================================================================
+// CLIENT CLEANUP
+// ============================================================================
 
-    // free client object
+void Server::removeClient(int fd) {
+    std::cout << "Removing client: fd " << fd << std::endl;
+
+    close(fd);
+
     if (_clients.count(fd)) {
         delete _clients[fd];
         _clients.erase(fd);
     }
 
-    // remove from poll list
     for (size_t i = 0; i < _pollfds.size(); ++i) {
         if (_pollfds[i].fd == fd) {
             _pollfds.erase(_pollfds.begin() + i);
             break;
         }
     }
-    //std::cout << "Client on fd " << fd << " disconnected" << std::endl;
 }
 
+// ============================================================================
+// IRC PROTOCOL (заглушки для Фазы 2)
+// ============================================================================
 
-// IRC protocol handlers (студенты реализуют)
 void Server::processCommand(Client& client, const std::string& line) {
-    // TODO: Parse command and dispatch to appropriate handler
     (void)client;
     (void)line;
 }
@@ -317,7 +347,6 @@ void Server::processCommand(Client& client, const std::string& line) {
 void Server::handlePass(Client& client, const Message& msg) {
     (void)client;
     (void)msg;
-
 }
 
 void Server::handleNick(Client& client, const Message& msg) {
@@ -365,7 +394,7 @@ void Server::handleMode(Client& client, const Message& msg) {
     (void)msg;
 }
 
-// Helper functions (студенты реализуют)
+// Helper functions (будут реализованы позже)
 void Server::tryRegisterClient(Client& client) {
     (void)client;
 }

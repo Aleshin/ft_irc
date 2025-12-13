@@ -217,45 +217,89 @@ test_multiple_clients() {
 }
 
 # ============================================
-# ТЕСТ 6: Проверка утечек памяти (valgrind)
+# ТЕСТ 6: Проверка утечек памяти
 # ============================================
 test_no_memory_leaks() {
-    echo "[6/7] Testing memory leaks (valgrind)..."
-    
-    if ! command -v valgrind &> /dev/null; then
-        echo -e "${YELLOW}⊘${NC} valgrind not installed, skipping"
-        return 0
-    fi
+    echo "[6/7] Testing memory leaks..."
     
     local port=$(random_port)
     
-    # Запускаем под valgrind
-    valgrind --leak-check=full --error-exitcode=1 --log-file=/tmp/valgrind.log \
-        ./ircserv $port password > /dev/null 2>&1 &
-    local pid=$!
-    sleep 2
+    # Проверяем доступность инструментов
+    local has_valgrind=false
+    local has_leaks=false
     
-    # Подключаемся и отключаемся несколько раз
-    for i in {1..3}; do
-        echo "TEST" | nc -w 1 localhost $port > /dev/null 2>&1
-        sleep 0.5
-    done
+    if command -v valgrind &> /dev/null; then
+        has_valgrind=true
+    fi
     
-    # Даем серверу 3 секунды на обработку, потом убиваем
-    sleep 1
-    kill $pid 2>/dev/null
-    wait $pid 2>/dev/null
+    if command -v leaks &> /dev/null; then
+        has_leaks=true
+    fi
     
-    # Проверяем отчет valgrind
-    if grep -q "ERROR SUMMARY: 0 errors" /tmp/valgrind.log && \
-       ! grep -q "definitely lost" /tmp/valgrind.log; then
-        echo -e "${GREEN}✓${NC} No memory leaks detected"
+    if ! $has_valgrind && ! $has_leaks; then
+        echo -e "${YELLOW}⊘${NC} No memory leak checker installed (valgrind/leaks), skipping"
         return 0
-    else
-        echo -e "${RED}✗${NC} Memory leaks detected"
-        echo "Valgrind report:"
-        cat /tmp/valgrind.log
-        return 1
+    fi
+    
+    # === VALGRIND (Linux) ===
+    if $has_valgrind; then
+        valgrind --leak-check=full --error-exitcode=1 --log-file=/tmp/valgrind.log \
+            ./ircserv $port password > /dev/null 2>&1 &
+        local pid=$!
+        sleep 2
+        
+        # Подключаемся и отключаемся несколько раз
+        for i in {1..3}; do
+            echo "TEST" | nc -w 1 localhost $port > /dev/null 2>&1
+            sleep 0.5
+        done
+        
+        sleep 1
+        kill $pid 2>/dev/null
+        wait $pid 2>/dev/null
+        
+        # Проверяем отчет valgrind
+        if grep -q "ERROR SUMMARY: 0 errors" /tmp/valgrind.log && \
+           ! grep -q "definitely lost" /tmp/valgrind.log; then
+            echo -e "${GREEN}✓${NC} No memory leaks detected (valgrind)"
+            return 0
+        else
+            echo -e "${RED}✗${NC} Memory leaks detected (valgrind)"
+            echo "Valgrind report:"
+            cat /tmp/valgrind.log
+            return 1
+        fi
+    fi
+    
+    # === LEAKS (macOS) ===
+    if $has_leaks; then
+        ./ircserv $port password > /dev/null 2>&1 &
+        local pid=$!
+        sleep 2
+        
+        # Подключаемся и отключаемся несколько раз
+        for i in {1..3}; do
+            echo "TEST" | nc -w 1 localhost $port > /dev/null 2>&1
+            sleep 0.5
+        done
+        
+        # Проверяем утечки
+        leaks $pid > /tmp/leaks.log 2>&1
+        local leak_status=$?
+        
+        kill $pid 2>/dev/null
+        wait $pid 2>/dev/null
+        
+        # leaks возвращает 0 если утечек нет
+        if [ $leak_status -eq 0 ]; then
+            echo -e "${GREEN}✓${NC} No memory leaks detected (leaks)"
+            return 0
+        else
+            echo -e "${RED}✗${NC} Memory leaks detected (leaks)"
+            echo "Leaks report:"
+            cat /tmp/leaks.log
+            return 1
+        fi
     fi
 }
 
