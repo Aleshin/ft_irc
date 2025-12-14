@@ -60,7 +60,7 @@ private:
     // Helpers
     void tryRegisterClient(Client& client);
     void addPollFd(int fd, short events);
-    void updatePollEvents(int fd, short events);  // NEW: Phase 1.2
+    void updatePollEvents(int fd, short events);
     void sendToClient(Client& client, const std::string& message);
     void broadcastToChannel(const std::string& channelName, 
                            const std::string& message, 
@@ -68,6 +68,13 @@ private:
     Channel* getChannel(const std::string& name);
     Client* getClientByNick(const std::string& nickname);
     void cleanup();
+    
+    // Validation helpers (reduce code duplication)
+    bool requireRegistered(Client& client);
+    Channel* requireChannel(Client& client, const std::string& name);
+    bool requireOnChannel(Client& client, Channel* channel, const std::string& name);
+    bool requireOperator(Client& client, Channel* channel, const std::string& name);
+    void deleteChannelIfEmpty(const std::string& name);
 
 private:
     int                     _port;

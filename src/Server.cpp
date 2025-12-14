@@ -256,16 +256,12 @@ void Server::acceptClient() {
 
     try {
         setNonBlocking(new_fd);
-        addPollFd(new_fd, POLLIN);
         _clients[new_fd] = new Client(new_fd);
+        addPollFd(new_fd, POLLIN);
         std::cout << "Client connected: fd " << new_fd << std::endl;
     } catch (const std::exception &e) {
         std::cerr << "Error setting up client: " << e.what() << std::endl;
         close(new_fd);
-        if (_clients.count(new_fd)) {
-            delete _clients[new_fd];
-            _clients.erase(new_fd);
-        }
     }
 }
 
@@ -379,13 +375,11 @@ void Server::removeClient(int fd) {
                 std::string quitMsg = ":" + client->getPrefix() + " QUIT :Connection closed\r\n";
                 broadcastToChannel(it->first, quitMsg, nick);
                 
-                channel->removeMember(nick);
-                channel->removeOperator(nick);
+                channel->removeMember(nick);  // Also removes from operators
                 channel->removeInvited(nick);
                 
-                if (channel->getMembers().empty()) {
+                if (channel->getMembers().empty())
                     emptyChannels.push_back(it->first);
-                }
             }
         }
 
@@ -551,11 +545,8 @@ void Server::handleJoin(Client& client, const Message& msg) {
     const std::string& nick = client.getDisplayNick();
     
     // Check if registered
-    if (!client.isRegistered()) {
-        sendToClient(client, Message::reply(ERR_NOTREGISTERED, nick,
-            "You have not registered").serialize());
+    if (!requireRegistered(client))
         return;
-    }
     
     // Check for channel parameter
     if (msg.getParams().empty()) {
@@ -615,12 +606,8 @@ void Server::handleJoin(Client& client, const Message& msg) {
     channel->addMember(client.getNickname());
     channel->removeInvited(nick);
     
-    // Build user prefix
-    std::string userPrefix = client.getNickname() + "!" + 
-                            client.getUsername() + "@localhost";
-    
     // Notify all channel members (including the joining user)
-    std::string joinMsg = Message::fromUser(userPrefix, "JOIN", channelName).serialize();
+    std::string joinMsg = Message::fromUser(client.getPrefix(), "JOIN", channelName).serialize();
     broadcastToChannel(channelName, joinMsg, "");
     
     // Send topic if exists
@@ -660,11 +647,8 @@ void Server::handleJoin(Client& client, const Message& msg) {
 void Server::handlePart(Client& client, const Message& msg) {
     const std::string& nick = client.getDisplayNick();
     
-    if (!client.isRegistered()) {
-        sendToClient(client, Message::reply(ERR_NOTREGISTERED, nick,
-            "You have not registered").serialize());
+    if (!requireRegistered(client))
         return;
-    }
     
     if (msg.getParams().empty()) {
         sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
@@ -675,43 +659,26 @@ void Server::handlePart(Client& client, const Message& msg) {
     std::string channelName = msg.getParams()[0];
     std::string reason = msg.getTrailing().empty() ? client.getNickname() : msg.getTrailing();
     
-    Channel* channel = getChannel(channelName);
-    if (!channel) {
-        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
-            channelName, "No such channel").serialize());
+    Channel* channel = requireChannel(client, channelName);
+    if (!channel)
         return;
-    }
     
-    if (!channel->hasMember(client.getNickname())) {
-        sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, nick,
-            channelName, "You're not on that channel").serialize());
+    if (!requireOnChannel(client, channel, channelName))
         return;
-    }
     
-    // Build user prefix and notify channel
-    std::string userPrefix = client.getNickname() + "!" + 
-                            client.getUsername() + "@localhost";
-    std::string partMsg = Message::fromUser(userPrefix, "PART", channelName, reason).serialize();
+    // Notify channel and remove member
+    std::string partMsg = Message::fromUser(client.getPrefix(), "PART", channelName, reason).serialize();
     broadcastToChannel(channelName, partMsg, "");
     
-    // Remove member from channel
     channel->removeMember(client.getNickname());
-    
-    // Delete empty channel
-    if (channel->getMembers().empty()) {
-        delete channel;
-        _channels.erase(channelName);
-    }
+    deleteChannelIfEmpty(channelName);
 }
 
 void Server::handlePrivmsg(Client& client, const Message& msg) {
     const std::string& nick = client.getDisplayNick();
     
-    if (!client.isRegistered()) {
-        sendToClient(client, Message::reply(ERR_NOTREGISTERED, nick,
-            "You have not registered").serialize());
+    if (!requireRegistered(client))
         return;
-    }
     
     if (msg.getParams().empty()) {
         sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
@@ -728,8 +695,7 @@ void Server::handlePrivmsg(Client& client, const Message& msg) {
         return;
     }
     
-    std::string userPrefix = client.getNickname() + "!" + 
-                            client.getUsername() + "@localhost";
+    std::string privmsg = Message::fromUser(client.getPrefix(), "PRIVMSG", target, text).serialize();
     
     // Check if target is a channel
     if (Message::isValidChannel(target)) {
@@ -747,7 +713,6 @@ void Server::handlePrivmsg(Client& client, const Message& msg) {
         }
         
         // Send to all except sender
-        std::string privmsg = Message::fromUser(userPrefix, "PRIVMSG", target, text).serialize();
         broadcastToChannel(target, privmsg, client.getNickname());
     } else {
         // Private message to user
@@ -758,7 +723,6 @@ void Server::handlePrivmsg(Client& client, const Message& msg) {
             return;
         }
         
-        std::string privmsg = Message::fromUser(userPrefix, "PRIVMSG", target, text).serialize();
         sendToClient(*targetClient, privmsg);
     }
 }
@@ -777,28 +741,15 @@ void Server::handleKick(Client& client, const Message& msg) {
     const std::string& targetNick = msg.getParams()[1];
     std::string reason = msg.getTrailing().empty() ? targetNick : msg.getTrailing();
     
-    // Check if channel exists
-    if (_channels.find(channelName) == _channels.end()) {
-        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
-            channelName, "No such channel").serialize());
+    Channel* channel = requireChannel(client, channelName);
+    if (!channel)
         return;
-    }
     
-    Channel* channel = _channels[channelName];
-    
-    // Check if client is on the channel
-    if (!channel->hasMember(nick)) {
-        sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, nick,
-            channelName, "You're not on that channel").serialize());
+    if (!requireOnChannel(client, channel, channelName))
         return;
-    }
     
-    // Check if client is operator
-    if (!channel->isOperator(nick)) {
-        sendToClient(client, Message::replyParam(ERR_CHANOPRIVSNEEDED, nick,
-            channelName, "You're not channel operator").serialize());
+    if (!requireOperator(client, channel, channelName))
         return;
-    }
     
     // Check if target is on the channel
     if (!channel->hasMember(targetNick)) {
@@ -812,16 +763,11 @@ void Server::handleKick(Client& client, const Message& msg) {
         channelName + " " + targetNick, reason).serialize();
     broadcastToChannel(channelName, kickMsg, "");
     
-    // Remove target from channel
+    // Remove target from channel (removeMember also removes from operators)
     channel->removeMember(targetNick);
-    channel->removeOperator(targetNick);
     channel->removeInvited(targetNick);
     
-    // Delete empty channel
-    if (channel->getMembers().empty()) {
-        delete channel;
-        _channels.erase(channelName);
-    }
+    deleteChannelIfEmpty(channelName);
 }
 
 void Server::handleInvite(Client& client, const Message& msg) {
@@ -837,21 +783,12 @@ void Server::handleInvite(Client& client, const Message& msg) {
     const std::string& targetNick = msg.getParams()[0];
     const std::string& channelName = msg.getParams()[1];
     
-    // Check if channel exists
-    if (_channels.find(channelName) == _channels.end()) {
-        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
-            channelName, "No such channel").serialize());
+    Channel* channel = requireChannel(client, channelName);
+    if (!channel)
         return;
-    }
     
-    Channel* channel = _channels[channelName];
-    
-    // Check if client is on the channel
-    if (!channel->hasMember(nick)) {
-        sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, nick,
-            channelName, "You're not on that channel").serialize());
+    if (!requireOnChannel(client, channel, channelName))
         return;
-    }
     
     // Check if client is operator (required for invite-only channels)
     if (channel->isInviteOnly() && !channel->isOperator(nick)) {
@@ -860,15 +797,7 @@ void Server::handleInvite(Client& client, const Message& msg) {
         return;
     }
     
-    // Find target client
-    Client* target = NULL;
-    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
-        if (it->second->getNickname() == targetNick) {
-            target = it->second;
-            break;
-        }
-    }
-    
+    Client* target = getClientByNick(targetNick);
     if (!target) {
         sendToClient(client, Message::replyParam(ERR_NOSUCHNICK, nick,
             targetNick, "No such nick/channel").serialize());
@@ -906,21 +835,12 @@ void Server::handleTopic(Client& client, const Message& msg) {
     
     const std::string& channelName = msg.getParams()[0];
     
-    // Check if channel exists
-    if (_channels.find(channelName) == _channels.end()) {
-        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
-            channelName, "No such channel").serialize());
+    Channel* channel = requireChannel(client, channelName);
+    if (!channel)
         return;
-    }
     
-    Channel* channel = _channels[channelName];
-    
-    // Check if client is on the channel
-    if (!channel->hasMember(nick)) {
-        sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, nick,
-            channelName, "You're not on that channel").serialize());
+    if (!requireOnChannel(client, channel, channelName))
         return;
-    }
     
     // If no trailing - get topic (query mode)
     if (msg.getTrailing().empty() && msg.getParamCount() == 1) {
@@ -963,18 +883,12 @@ void Server::handleMode(Client& client, const Message& msg) {
     const std::string& target = msg.getParams()[0];
     
     // Skip user modes (not required by subject)
-    if (!Message::isValidChannel(target)) {
+    if (!Message::isValidChannel(target))
         return;
-    }
     
-    // Check if channel exists
-    if (_channels.find(target) == _channels.end()) {
-        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
-            target, "No such channel").serialize());
+    Channel* channel = requireChannel(client, target);
+    if (!channel)
         return;
-    }
-    
-    Channel* channel = _channels[target];
     
     // If no mode string - query current modes
     if (msg.getParamCount() == 1) {
@@ -998,103 +912,89 @@ void Server::handleMode(Client& client, const Message& msg) {
         return;
     }
     
-    // Check if client is on the channel
-    if (!channel->hasMember(nick)) {
-        sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, nick,
-            target, "You're not on that channel").serialize());
+    if (!requireOnChannel(client, channel, target))
         return;
-    }
     
-    // Check if client is operator
-    if (!channel->isOperator(nick)) {
-        sendToClient(client, Message::replyParam(ERR_CHANOPRIVSNEEDED, nick,
-            target, "You're not channel operator").serialize());
+    if (!requireOperator(client, channel, target))
         return;
-    }
     
-    // Parse mode string
+    // Parse mode string and apply changes
     const std::string& modeStr = msg.getParams()[1];
     bool adding = true;
     size_t paramIdx = 2;
-    std::string appliedModes;
-    std::string appliedParams;
+    std::string addModes, removeModes;
+    std::string addParams, removeParams;
     
     for (size_t i = 0; i < modeStr.length(); ++i) {
         char c = modeStr[i];
         
-        if (c == '+') {
-            adding = true;
-            continue;
-        } else if (c == '-') {
-            adding = false;
-            continue;
-        }
+        if (c == '+') { adding = true; continue; }
+        if (c == '-') { adding = false; continue; }
         
         switch (c) {
             case 'i':
                 channel->setInviteOnly(adding);
-                appliedModes += (adding ? "+i" : "-i");
+                (adding ? addModes : removeModes) += 'i';
                 break;
                 
             case 't':
                 channel->setTopicRestricted(adding);
-                appliedModes += (adding ? "+t" : "-t");
+                (adding ? addModes : removeModes) += 't';
                 break;
                 
             case 'k':
-                if (adding) {
-                    if (paramIdx < msg.getParamCount()) {
-                        channel->setKey(msg.getParams()[paramIdx]);
-                        appliedModes += "+k";
-                        appliedParams += " " + msg.getParams()[paramIdx];
-                        ++paramIdx;
-                    }
-                } else {
+                if (adding && paramIdx < msg.getParamCount()) {
+                    channel->setKey(msg.getParams()[paramIdx]);
+                    addModes += 'k';
+                    addParams += " " + msg.getParams()[paramIdx++];
+                } else if (!adding) {
                     channel->setKey("");
-                    appliedModes += "-k";
+                    removeModes += 'k';
                 }
                 break;
                 
             case 'o':
                 if (paramIdx < msg.getParamCount()) {
-                    const std::string& targetNick = msg.getParams()[paramIdx];
+                    const std::string& targetNick = msg.getParams()[paramIdx++];
                     if (channel->hasMember(targetNick)) {
                         if (adding) {
                             channel->addOperator(targetNick);
-                            appliedModes += "+o";
+                            addModes += 'o';
+                            addParams += " " + targetNick;
                         } else {
                             channel->removeOperator(targetNick);
-                            appliedModes += "-o";
+                            removeModes += 'o';
+                            removeParams += " " + targetNick;
                         }
-                        appliedParams += " " + targetNick;
                     }
-                    ++paramIdx;
                 }
                 break;
                 
             case 'l':
-                if (adding) {
-                    if (paramIdx < msg.getParamCount()) {
-                        int limit = std::atoi(msg.getParams()[paramIdx].c_str());
-                        if (limit > 0) {
-                            channel->setUserLimit(limit);
-                            appliedModes += "+l";
-                            appliedParams += " " + msg.getParams()[paramIdx];
-                        }
-                        ++paramIdx;
+                if (adding && paramIdx < msg.getParamCount()) {
+                    int limit = std::atoi(msg.getParams()[paramIdx].c_str());
+                    if (limit > 0) {
+                        channel->setUserLimit(limit);
+                        addModes += 'l';
+                        addParams += " " + msg.getParams()[paramIdx];
                     }
-                } else {
+                    ++paramIdx;
+                } else if (!adding) {
                     channel->setUserLimit(0);
-                    appliedModes += "-l";
+                    removeModes += 'l';
                 }
                 break;
         }
     }
     
-    // Broadcast mode change if any modes were applied
+    // Build formatted mode string: +modes-modes params
+    std::string appliedModes;
+    if (!addModes.empty()) appliedModes += "+" + addModes;
+    if (!removeModes.empty()) appliedModes += "-" + removeModes;
+    
     if (!appliedModes.empty()) {
         std::string modeMsg = Message::fromUser(client.getPrefix(), "MODE",
-            target + " " + appliedModes + appliedParams, "").serialize();
+            target + " " + appliedModes + addParams + removeParams, "").serialize();
         broadcastToChannel(target, modeMsg, "");
     }
 }
@@ -1184,4 +1084,49 @@ Client* Server::getClientByNick(const std::string& nickname) {
             return it->second;
     }
     return NULL;
+}
+
+// ============================================================================
+// VALIDATION HELPERS (reduce code duplication)
+// ============================================================================
+
+bool Server::requireRegistered(Client& client) {
+    if (client.isRegistered())
+        return true;
+    sendToClient(client, Message::reply(ERR_NOTREGISTERED, client.getDisplayNick(),
+        "You have not registered").serialize());
+    return false;
+}
+
+Channel* Server::requireChannel(Client& client, const std::string& name) {
+    Channel* channel = getChannel(name);
+    if (!channel) {
+        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, client.getDisplayNick(),
+            name, "No such channel").serialize());
+    }
+    return channel;
+}
+
+bool Server::requireOnChannel(Client& client, Channel* channel, const std::string& name) {
+    if (channel->hasMember(client.getNickname()))
+        return true;
+    sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, client.getDisplayNick(),
+        name, "You're not on that channel").serialize());
+    return false;
+}
+
+bool Server::requireOperator(Client& client, Channel* channel, const std::string& name) {
+    if (channel->isOperator(client.getNickname()))
+        return true;
+    sendToClient(client, Message::replyParam(ERR_CHANOPRIVSNEEDED, client.getDisplayNick(),
+        name, "You're not channel operator").serialize());
+    return false;
+}
+
+void Server::deleteChannelIfEmpty(const std::string& name) {
+    Channel* channel = getChannel(name);
+    if (channel && channel->getMembers().empty()) {
+        delete channel;
+        _channels.erase(name);
+    }
 }
