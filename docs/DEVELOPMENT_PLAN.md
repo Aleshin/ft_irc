@@ -2,11 +2,31 @@
 
 > Последнее обновление: 14 декабря 2025
 
-## 📊 Текущее Состояние: 80% → Фаза 4 Завершена ✅
+## 📊 Текущее Состояние: 100% ЗАВЕРШЕНО ✅
 
 ---
 
 ## ✅ ЗАВЕРШЁННЫЕ ФАЗЫ
+
+### 🏆 Фаза 6: Дополнительный функционал (14 декабря 2025)
+- ✅ PING/PONG - keep-alive для IRC клиентов
+- ✅ Обработка сигналов (SIGINT/SIGTERM) - graceful shutdown
+- ✅ poll() с таймаутом для проверки сигналов
+- ✅ **extra_test.sh: 20/20 тестов**
+- ✅ **signal_test.sh: 10/10 тестов**
+
+### 🏆 Фаза 5: Операторские Команды (14 декабря 2025)
+- ✅ handleKick() - исключение пользователя из канала
+- ✅ handleInvite() - приглашение в канал (для +i)
+- ✅ handleTopic() - установка/просмотр темы канала
+- ✅ handleMode() - все режимы канала:
+  - ✅ +i/-i - Invite-only
+  - ✅ +t/-t - Topic restricted (только операторы)
+  - ✅ +k/-k - Channel key (пароль)
+  - ✅ +o/-o - Give/take operator privilege
+  - ✅ +l/-l - User limit
+- ✅ Удаление пустых каналов при PART/KICK/disconnect
+- ✅ **full_test.sh: 59/59 тестов**
 
 ### 🏆 Фаза 4: Каналы и Сообщения (14 декабря 2025)
 - ✅ handleJoin() - создание/присоединение к каналу с проверками +i/+k/+l
@@ -15,7 +35,6 @@
 - ✅ broadcastToChannel() - рассылка всем участникам
 - ✅ Первый пользователь становится оператором (@)
 - ✅ NAMES list (353 + 366)
-- ✅ **17/17 тестов проходят**
 
 **Тег:** `v0.4.0`
 
@@ -26,7 +45,7 @@
 - ✅ tryRegisterClient() - завершение регистрации
 - ✅ sendToClient() - реальная отправка ответов
 - ✅ Welcome sequence (001-004)
-- ✅ **14/14 тестов проходят**
+- ✅ **quick_test.sh: 13/13 тестов**
 
 **Тег:** `v0.3.0`  
 **Документация:** [PHASE3_COMPLETED.md](PHASE3_COMPLETED.md)
@@ -43,49 +62,45 @@
 ### 🏆 Фаза 1: Сетевая Инфраструктура (13 декабря 2025)
 - ✅ Архитектура классов (Server, Client, Channel, Message)
 - ✅ Полный сетевой стек с poll() - неблокирующий I/O
-- ✅ **7/7 тестов проходят**
+- ✅ O_NONBLOCK на всех сокетах
+- ✅ SO_REUSEADDR для быстрого перезапуска
 
 **Тег:** `v0.1.0`  
 **Документация:** [PHASE1_COMPLETED.md](PHASE1_COMPLETED.md)
 
 ---
 
-## 🔄 ФАЗА 5: Операторские Команды (СЛЕДУЮЩАЯ)
+## 📋 Соответствие требованиям Subject
 
-**Статус:** 🔄 Готова к началу  
-**Ветка:** `phase5`  
-**Зависимости:** Фаза 4 ✅
+### Makefile ✅
+- [x] Правила: `$(NAME)`, `all`, `clean`, `fclean`, `re`
+- [x] Флаги: `c++ -Wall -Wextra -Werror -std=c++98`
+- [x] Имя программы: `ircserv`
+- [x] Без лишних релинков
 
-### Задачи:
-- [ ] handleKick() - исключение пользователя из канала
-- [ ] handleInvite() - приглашение в канал (для +i)
-- [ ] handleTopic() - установка/просмотр темы канала
-- [ ] handleMode() - режимы канала:
-  - [ ] +i/-i - Invite-only
-  - [ ] +t/-t - Topic restricted (только операторы)
-  - [ ] +k/-k - Channel key (пароль)
-  - [ ] +o/-o - Give/take operator privilege
-  - [ ] +l/-l - User limit
+### C++98 ✅
+- [x] STL контейнеры: `std::map`, `std::vector`, `std::set`, `std::string`
+- [x] Без внешних библиотек
+- [x] Без Boost
 
-### Numeric Codes для Фазы 5:
-```
-RPL_INVITING         341   // :server 341 inviter nick #channel
-RPL_TOPIC            332   // :server 332 nick #channel :Topic text
-RPL_NOTOPIC          331   // :server 331 nick #channel :No topic is set
-RPL_CHANNELMODEIS    324   // :server 324 nick #channel +modes
+### Сетевой стек ✅
+- [x] Единственный `poll()` для всех операций
+- [x] Все сокеты в `O_NONBLOCK`
+- [x] Без `fork()`
+- [x] Проверка всех системных вызовов
 
-ERR_USERNOTINCHANNEL 441   // :server 441 nick user #channel :They aren't on that channel
-ERR_CHANOPRIVSNEEDED 482   // :server 482 nick #channel :You're not channel operator
-ERR_USERONCHANNEL    443   // :server 443 nick user #channel :is already on channel
-ERR_UNKNOWNMODE      472   // :server 472 char :is unknown mode char to me
-```
+### IRC протокол ✅
+- [x] Регистрация: PASS, NICK, USER
+- [x] Каналы: JOIN, PART
+- [x] Сообщения: PRIVMSG (каналы и личные)
+- [x] Операторские: KICK, INVITE, TOPIC, MODE
+- [x] Режимы: +i, +t, +k, +o, +l
+- [x] Дополнительно: PING/PONG, QUIT
 
-### Критерии завершения:
-- [ ] Оператор может кикать пользователей
-- [ ] Оператор может приглашать в +i каналы
-- [ ] Оператор может менять топик в +t каналах
-- [ ] Все режимы работают корректно
-- [ ] Все тесты phase5 проходят
+### Сигналы ✅
+- [x] SIGINT - graceful shutdown
+- [x] SIGTERM - graceful shutdown
+- [x] Корректное освобождение ресурсов
 
 ---
 
@@ -93,26 +108,49 @@ ERR_UNKNOWNMODE      472   // :server 472 char :is unknown mode char to me
 
 ```
 ft_irc/
-├── include/ (Server.hpp, Client.hpp, Channel.hpp, Message.hpp)
-├── src/ (main.cpp, Server.cpp, Client.cpp, Channel.cpp, Message.cpp)
-├── tests/ (check_system.sh, phase1-4_tests.sh)
-└── docs/ (DEVELOPMENT_PLAN.md, PHASE1-3_COMPLETED.md)
+├── Makefile
+├── ircserv                    # Исполняемый файл
+├── include/
+│   ├── Server.hpp             # 82 строки
+│   ├── Client.hpp             # 65 строк
+│   ├── Channel.hpp            # 68 строк
+│   └── Message.hpp            # 159 строк
+├── src/
+│   ├── main.cpp               # 47 строк - точка входа + сигналы
+│   ├── Server.cpp             # 1187 строк - основная логика
+│   ├── Client.cpp             # 108 строк
+│   ├── Channel.cpp            # 107 строк
+│   └── Message.cpp            # 305 строк
+├── tests/
+│   ├── quick_test.sh          # 13 тестов - быстрая проверка
+│   ├── full_test.sh           # 59 тестов - полное тестирование
+│   ├── extra_test.sh          # 20 тестов - PING/PONG и стресс
+│   └── signal_test.sh         # 10 тестов - обработка сигналов
+└── docs/
+    ├── DEVELOPMENT_PLAN.md    # Этот файл
+    ├── ft_irc_extended_subject.md
+    └── evaluation.md
 ```
 
-**Всего:** 4 класса, ~2000+ строк кода, 31 тест
+---
+
+## 📊 Тестовое покрытие
+
+| Тест | Количество | Статус |
+|------|------------|--------|
+| quick_test.sh | 13 | ✅ Все проходят |
+| full_test.sh | 59 | ✅ Все проходят |
+| extra_test.sh | 20 | ✅ Все проходят |
+| signal_test.sh | 10 | ✅ Все проходят |
+| **ИТОГО** | **102** | **✅ 100%** |
+
+Все тесты также проходят на ngircd (reference implementation):
+- quick_test.sh: 13/13 ✅
+- full_test.sh: 59/59 ✅
+- extra_test.sh: 20/20 ✅
 
 ---
 
-## 📅 Прогресс
+## 🎯 Готовность к сдаче: 100%
 
-| Фаза | Статус | Тег | Тесты |
-|------|--------|-----|-------|
-| Фаза 1: Сеть | ✅ | v0.1.0 | 7/7 |
-| Фаза 2: Парсинг | ✅ | v0.2.0 | - |
-| Фаза 3: Регистрация | ✅ | v0.3.0 | 14/14 |
-| Фаза 4: Каналы | ✅ | v0.4.0 | 17/17 |
-| Фаза 5: Операторы | �� | - | 0/? |
-
----
-
-**Версия документа:** 2.0
+Проект полностью соответствует требованиям Subject и готов к защите.

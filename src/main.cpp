@@ -1,6 +1,16 @@
 #include "Server.hpp"
 #include <iostream>
 #include <cstdlib>
+#include <csignal>
+
+// Global flag for graceful shutdown
+volatile sig_atomic_t g_running = 1;
+
+void signalHandler(int sig) {
+    (void)sig;
+    g_running = 0;
+    std::cout << "\nShutdown signal received, exiting..." << std::endl;
+}
 
 int main(int argc, char** argv) {
     if (argc != 3) {
@@ -8,6 +18,10 @@ int main(int argc, char** argv) {
         std::cerr << "Example: ./ircserv 6667 mypassword" << std::endl;
         return 1;
     }
+
+    // Setup signal handlers
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
 
     int port = std::atoi(argv[1]);
     if (port <= 0 || port > 65535) {

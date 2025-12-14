@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <csignal>
 
 // Константы
 static const size_t BUFFER_SIZE = 1024;
@@ -114,6 +115,9 @@ void Server::updatePollEvents(int fd, short events) {
 // MAIN EVENT LOOP
 // ============================================================================
 
+// External signal flag from main.cpp
+extern volatile sig_atomic_t g_running;
+
 void Server::run() {
     try {
         initSocket();
@@ -122,10 +126,15 @@ void Server::run() {
 
         std::vector<int> fdsToRemove;
         
-        while (true) {
-            int ret = poll(&_pollfds[0], _pollfds.size(), -1);
-            if (ret < 0)
+        while (g_running) {
+            int ret = poll(&_pollfds[0], _pollfds.size(), 1000);  // 1 sec timeout for signal check
+            if (ret < 0) {
+                if (errno == EINTR)
+                    continue;  // Interrupted by signal, check g_running
                 throw std::runtime_error("poll() failed: " + std::string(strerror(errno)));
+            }
+            if (ret == 0)
+                continue;  // Timeout, check g_running
 
             for (size_t i = _pollfds.size(); i > 0; --i) {
                 size_t index = i - 1;
@@ -327,18 +336,21 @@ void Server::readFromClient(Client& client) {
 
 void Server::writeToClient(Client& client) {
     std::string& out = client.getOutputBuffer();
-    if (out.empty())
-        return;
+    
+    while (!out.empty()) {
+        ssize_t n = send(client.getFd(), out.data(), out.size(), 0);
 
-    ssize_t n = send(client.getFd(), out.data(), out.size(), 0);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                return;  // Would block, try again later
+            throw std::runtime_error("send() failed: " + std::string(strerror(errno)));
+        }
 
-    if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        if (n == 0)
             return;
-        throw std::runtime_error("send() failed: " + std::string(strerror(errno)));
-    }
 
-    out.erase(0, static_cast<size_t>(n));
+        out.erase(0, static_cast<size_t>(n));
+    }
 }
 
 // ============================================================================
@@ -347,6 +359,42 @@ void Server::writeToClient(Client& client) {
 
 void Server::removeClient(int fd) {
     std::cout << "Removing client: fd " << fd << std::endl;
+
+    // Get client info before deletion
+    Client* client = NULL;
+    if (_clients.count(fd)) {
+        client = _clients[fd];
+    }
+
+    // Remove client from all channels and delete empty ones
+    if (client && !client->getNickname().empty()) {
+        const std::string& nick = client->getNickname();
+        std::vector<std::string> emptyChannels;
+
+        for (std::map<std::string, Channel*>::iterator it = _channels.begin(); 
+             it != _channels.end(); ++it) {
+            Channel* channel = it->second;
+            if (channel->hasMember(nick)) {
+                // Notify other channel members about quit
+                std::string quitMsg = ":" + client->getPrefix() + " QUIT :Connection closed\r\n";
+                broadcastToChannel(it->first, quitMsg, nick);
+                
+                channel->removeMember(nick);
+                channel->removeOperator(nick);
+                channel->removeInvited(nick);
+                
+                if (channel->getMembers().empty()) {
+                    emptyChannels.push_back(it->first);
+                }
+            }
+        }
+
+        // Delete empty channels
+        for (size_t i = 0; i < emptyChannels.size(); ++i) {
+            delete _channels[emptyChannels[i]];
+            _channels.erase(emptyChannels[i]);
+        }
+    }
 
     close(fd);
 
@@ -395,6 +443,11 @@ void Server::processCommand(Client& client, const std::string& line) {
         handleTopic(client, msg);
     } else if (cmd == "MODE") {
         handleMode(client, msg);
+    } else if (cmd == "PING") {
+        handlePing(client, msg);
+    } else if (cmd == "PONG") {
+        // PONG from client - just acknowledge, no response needed
+        // Clients send PONG in response to server PING for keep-alive
     } else if (cmd == "QUIT") {
         std::cout << "Client requested QUIT" << std::endl;
         removeClient(client.getFd());
@@ -763,6 +816,12 @@ void Server::handleKick(Client& client, const Message& msg) {
     channel->removeMember(targetNick);
     channel->removeOperator(targetNick);
     channel->removeInvited(targetNick);
+    
+    // Delete empty channel
+    if (channel->getMembers().empty()) {
+        delete channel;
+        _channels.erase(channelName);
+    }
 }
 
 void Server::handleInvite(Client& client, const Message& msg) {
@@ -1040,6 +1099,21 @@ void Server::handleMode(Client& client, const Message& msg) {
     }
 }
 
+void Server::handlePing(Client& client, const Message& msg) {
+    // PING requires a token to echo back
+    std::string token;
+    if (!msg.getParams().empty()) {
+        token = msg.getParams()[0];
+    } else if (!msg.getTrailing().empty()) {
+        token = msg.getTrailing();
+    } else {
+        token = _serverName;
+    }
+    
+    // Reply with PONG
+    sendToClient(client, ":" + _serverName + " PONG " + _serverName + " :" + token + "\r\n");
+}
+
 // ============================================================================
 // REGISTRATION HELPERS
 // ============================================================================
@@ -1072,6 +1146,12 @@ void Server::tryRegisterClient(Client& client) {
 
 void Server::sendToClient(Client& client, const std::string& message) {
     client.appendToOutput(message);
+    // Immediately try to flush output buffer
+    try {
+        flushClientOutput(client);
+    } catch (...) {
+        // Ignore errors, will be handled in main loop
+    }
 }
 
 void Server::broadcastToChannel(const std::string& channelName,

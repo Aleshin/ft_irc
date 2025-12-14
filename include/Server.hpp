@@ -55,6 +55,7 @@ private:
     void handleInvite(Client& client, const Message& msg);
     void handleTopic(Client& client, const Message& msg);
     void handleMode(Client& client, const Message& msg);
+    void handlePing(Client& client, const Message& msg);
 
     // Helpers
     void tryRegisterClient(Client& client);
