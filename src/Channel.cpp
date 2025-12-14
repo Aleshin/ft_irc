@@ -26,6 +26,7 @@ Channel::Channel(const Channel& other)
       _topic(other._topic),
       _members(other._members),
       _operators(other._operators),
+      _invited(other._invited),
       _inviteOnly(other._inviteOnly),
       _topicRestricted(other._topicRestricted),
       _key(other._key),
@@ -37,6 +38,7 @@ Channel& Channel::operator=(const Channel& other) {
         _topic = other._topic;
         _members = other._members;
         _operators = other._operators;
+        _invited = other._invited;
         _inviteOnly = other._inviteOnly;
         _topicRestricted = other._topicRestricted;
         _key = other._key;
@@ -89,4 +91,17 @@ void Channel::removeOperator(const std::string& nickname) {
 
 bool Channel::isOperator(const std::string& nickname) const {
     return _operators.find(nickname) != _operators.end();
+}
+
+// Invite list management
+void Channel::addInvited(const std::string& nickname) {
+    _invited.insert(nickname);
+}
+
+void Channel::removeInvited(const std::string& nickname) {
+    _invited.erase(nickname);
+}
+
+bool Channel::isInvited(const std::string& nickname) const {
+    return _invited.find(nickname) != _invited.end();
 }

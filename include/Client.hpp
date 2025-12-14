@@ -32,6 +32,7 @@ public:
     bool hasPassword() const;
     bool isPendingDisconnect() const;
     std::string getDisplayNick() const;  // Returns nickname or "*" for IRC replies
+    std::string getPrefix() const;        // Returns nick!user@host for IRC messages
 
     // Setters
     void setNickname(const std::string& nick);
@@ -46,7 +47,8 @@ public:
     void appendToOutput(const std::string& data);
     void clearInputBuffer();
     void clearOutputBuffer();
-    std::string extractLine();  // Extract complete line from input buffer
+    std::string extractLine();      // Extract complete line from input buffer
+    bool hasCompleteLine() const;   // Check if buffer has a complete line
 
 private:
     int         _fd;

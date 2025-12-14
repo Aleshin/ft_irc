@@ -48,11 +48,17 @@ public:
     void removeOperator(const std::string& nickname);
     bool isOperator(const std::string& nickname) const;
 
+    // Invite list management (for +i channels)
+    void addInvited(const std::string& nickname);
+    void removeInvited(const std::string& nickname);
+    bool isInvited(const std::string& nickname) const;
+
 private:
     std::string            _name;
     std::string            _topic;
     std::set<std::string>  _members;
     std::set<std::string>  _operators;
+    std::set<std::string>  _invited;
     bool                   _inviteOnly;
     bool                   _topicRestricted;
     std::string            _key;

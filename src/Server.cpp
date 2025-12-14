@@ -270,7 +270,11 @@ void Server::handleClient(size_t index) {
 
     // Process complete IRC commands
     std::string line;
-    while (!(line = client->extractLine()).empty()) {
+    while (client->hasCompleteLine()) {
+        line = client->extractLine();
+        // Skip empty lines (just \r\n)
+        if (line.empty())
+            continue;
         try {
             processCommand(*client, line);
         } catch (const std::exception& e) {
@@ -529,8 +533,8 @@ void Server::handleJoin(Client& client, const Message& msg) {
     if (channel->hasMember(client.getNickname()))
         return;
     
-    // Check invite-only mode
-    if (channel->isInviteOnly()) {
+    // Check invite-only mode (allow if invited)
+    if (channel->isInviteOnly() && !channel->isInvited(nick)) {
         sendToClient(client, Message::replyParam(ERR_INVITEONLYCHAN, nick,
             channelName, "Cannot join channel (+i)").serialize());
         return;
@@ -554,8 +558,9 @@ void Server::handleJoin(Client& client, const Message& msg) {
         return;
     }
     
-    // Add member to channel
+    // Add member to channel and remove from invite list
     channel->addMember(client.getNickname());
+    channel->removeInvited(nick);
     
     // Build user prefix
     std::string userPrefix = client.getNickname() + "!" + 
@@ -706,23 +711,333 @@ void Server::handlePrivmsg(Client& client, const Message& msg) {
 }
 
 void Server::handleKick(Client& client, const Message& msg) {
-    (void)client;
-    (void)msg;
+    const std::string& nick = client.getNickname();
+    
+    // KICK requires at least 2 parameters: channel and target nick
+    if (msg.getParamCount() < 2) {
+        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
+            "KICK", "Not enough parameters").serialize());
+        return;
+    }
+    
+    const std::string& channelName = msg.getParams()[0];
+    const std::string& targetNick = msg.getParams()[1];
+    std::string reason = msg.getTrailing().empty() ? targetNick : msg.getTrailing();
+    
+    // Check if channel exists
+    if (_channels.find(channelName) == _channels.end()) {
+        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
+            channelName, "No such channel").serialize());
+        return;
+    }
+    
+    Channel* channel = _channels[channelName];
+    
+    // Check if client is on the channel
+    if (!channel->hasMember(nick)) {
+        sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, nick,
+            channelName, "You're not on that channel").serialize());
+        return;
+    }
+    
+    // Check if client is operator
+    if (!channel->isOperator(nick)) {
+        sendToClient(client, Message::replyParam(ERR_CHANOPRIVSNEEDED, nick,
+            channelName, "You're not channel operator").serialize());
+        return;
+    }
+    
+    // Check if target is on the channel
+    if (!channel->hasMember(targetNick)) {
+        sendToClient(client, Message::replyParam(ERR_USERNOTINCHANNEL, nick,
+            targetNick + " " + channelName, "They aren't on that channel").serialize());
+        return;
+    }
+    
+    // Send KICK message to all channel members
+    std::string kickMsg = Message::fromUser(client.getPrefix(), "KICK",
+        channelName + " " + targetNick, reason).serialize();
+    broadcastToChannel(channelName, kickMsg, "");
+    
+    // Remove target from channel
+    channel->removeMember(targetNick);
+    channel->removeOperator(targetNick);
+    channel->removeInvited(targetNick);
 }
 
 void Server::handleInvite(Client& client, const Message& msg) {
-    (void)client;
-    (void)msg;
+    const std::string& nick = client.getNickname();
+    
+    // INVITE requires 2 parameters: target nick and channel
+    if (msg.getParamCount() < 2) {
+        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
+            "INVITE", "Not enough parameters").serialize());
+        return;
+    }
+    
+    const std::string& targetNick = msg.getParams()[0];
+    const std::string& channelName = msg.getParams()[1];
+    
+    // Check if channel exists
+    if (_channels.find(channelName) == _channels.end()) {
+        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
+            channelName, "No such channel").serialize());
+        return;
+    }
+    
+    Channel* channel = _channels[channelName];
+    
+    // Check if client is on the channel
+    if (!channel->hasMember(nick)) {
+        sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, nick,
+            channelName, "You're not on that channel").serialize());
+        return;
+    }
+    
+    // Check if client is operator (required for invite-only channels)
+    if (channel->isInviteOnly() && !channel->isOperator(nick)) {
+        sendToClient(client, Message::replyParam(ERR_CHANOPRIVSNEEDED, nick,
+            channelName, "You're not channel operator").serialize());
+        return;
+    }
+    
+    // Find target client
+    Client* target = NULL;
+    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
+        if (it->second->getNickname() == targetNick) {
+            target = it->second;
+            break;
+        }
+    }
+    
+    if (!target) {
+        sendToClient(client, Message::replyParam(ERR_NOSUCHNICK, nick,
+            targetNick, "No such nick/channel").serialize());
+        return;
+    }
+    
+    // Check if target is already on channel
+    if (channel->hasMember(targetNick)) {
+        sendToClient(client, Message::replyParam(ERR_USERONCHANNEL, nick,
+            targetNick + " " + channelName, "is already on channel").serialize());
+        return;
+    }
+    
+    // Add to invite list and send notifications
+    channel->addInvited(targetNick);
+    
+    // Send RPL_INVITING to inviter
+    sendToClient(client, Message::replyParam(RPL_INVITING, nick,
+        channelName, targetNick).serialize());
+    
+    // Send INVITE notification to target
+    sendToClient(*target, Message::fromUser(client.getPrefix(), "INVITE",
+        targetNick, channelName).serialize());
 }
 
 void Server::handleTopic(Client& client, const Message& msg) {
-    (void)client;
-    (void)msg;
+    const std::string& nick = client.getNickname();
+    
+    // TOPIC requires at least 1 parameter: channel
+    if (msg.getParamCount() < 1) {
+        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
+            "TOPIC", "Not enough parameters").serialize());
+        return;
+    }
+    
+    const std::string& channelName = msg.getParams()[0];
+    
+    // Check if channel exists
+    if (_channels.find(channelName) == _channels.end()) {
+        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
+            channelName, "No such channel").serialize());
+        return;
+    }
+    
+    Channel* channel = _channels[channelName];
+    
+    // Check if client is on the channel
+    if (!channel->hasMember(nick)) {
+        sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, nick,
+            channelName, "You're not on that channel").serialize());
+        return;
+    }
+    
+    // If no trailing - get topic (query mode)
+    if (msg.getTrailing().empty() && msg.getParamCount() == 1) {
+        if (channel->getTopic().empty()) {
+            sendToClient(client, Message::replyParam(RPL_NOTOPIC, nick,
+                channelName, "No topic is set").serialize());
+        } else {
+            sendToClient(client, Message::replyParam(RPL_TOPIC, nick,
+                channelName, channel->getTopic()).serialize());
+        }
+        return;
+    }
+    
+    // Setting topic - check permissions if +t
+    if (channel->isTopicRestricted() && !channel->isOperator(nick)) {
+        sendToClient(client, Message::replyParam(ERR_CHANOPRIVSNEEDED, nick,
+            channelName, "You're not channel operator").serialize());
+        return;
+    }
+    
+    // Set the topic
+    channel->setTopic(msg.getTrailing());
+    
+    // Broadcast to channel
+    std::string topicMsg = Message::fromUser(client.getPrefix(), "TOPIC",
+        channelName, channel->getTopic()).serialize();
+    broadcastToChannel(channelName, topicMsg, "");
 }
 
 void Server::handleMode(Client& client, const Message& msg) {
-    (void)client;
-    (void)msg;
+    const std::string& nick = client.getNickname();
+    
+    // MODE requires at least 1 parameter: channel
+    if (msg.getParamCount() < 1) {
+        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
+            "MODE", "Not enough parameters").serialize());
+        return;
+    }
+    
+    const std::string& target = msg.getParams()[0];
+    
+    // Skip user modes (not required by subject)
+    if (!Message::isValidChannel(target)) {
+        return;
+    }
+    
+    // Check if channel exists
+    if (_channels.find(target) == _channels.end()) {
+        sendToClient(client, Message::replyParam(ERR_NOSUCHCHANNEL, nick,
+            target, "No such channel").serialize());
+        return;
+    }
+    
+    Channel* channel = _channels[target];
+    
+    // If no mode string - query current modes
+    if (msg.getParamCount() == 1) {
+        std::string modes = "+";
+        std::string modeParams;
+        if (channel->isInviteOnly()) modes += "i";
+        if (channel->isTopicRestricted()) modes += "t";
+        if (!channel->getKey().empty()) {
+            modes += "k";
+            modeParams += " " + channel->getKey();
+        }
+        if (channel->getUserLimit() > 0) {
+            modes += "l";
+            std::ostringstream oss;
+            oss << channel->getUserLimit();
+            modeParams += " " + oss.str();
+        }
+        if (modes == "+") modes = "";
+        sendToClient(client, Message::replyParam(RPL_CHANNELMODEIS, nick,
+            target, modes + modeParams).serialize());
+        return;
+    }
+    
+    // Check if client is on the channel
+    if (!channel->hasMember(nick)) {
+        sendToClient(client, Message::replyParam(ERR_NOTONCHANNEL, nick,
+            target, "You're not on that channel").serialize());
+        return;
+    }
+    
+    // Check if client is operator
+    if (!channel->isOperator(nick)) {
+        sendToClient(client, Message::replyParam(ERR_CHANOPRIVSNEEDED, nick,
+            target, "You're not channel operator").serialize());
+        return;
+    }
+    
+    // Parse mode string
+    const std::string& modeStr = msg.getParams()[1];
+    bool adding = true;
+    size_t paramIdx = 2;
+    std::string appliedModes;
+    std::string appliedParams;
+    
+    for (size_t i = 0; i < modeStr.length(); ++i) {
+        char c = modeStr[i];
+        
+        if (c == '+') {
+            adding = true;
+            continue;
+        } else if (c == '-') {
+            adding = false;
+            continue;
+        }
+        
+        switch (c) {
+            case 'i':
+                channel->setInviteOnly(adding);
+                appliedModes += (adding ? "+i" : "-i");
+                break;
+                
+            case 't':
+                channel->setTopicRestricted(adding);
+                appliedModes += (adding ? "+t" : "-t");
+                break;
+                
+            case 'k':
+                if (adding) {
+                    if (paramIdx < msg.getParamCount()) {
+                        channel->setKey(msg.getParams()[paramIdx]);
+                        appliedModes += "+k";
+                        appliedParams += " " + msg.getParams()[paramIdx];
+                        ++paramIdx;
+                    }
+                } else {
+                    channel->setKey("");
+                    appliedModes += "-k";
+                }
+                break;
+                
+            case 'o':
+                if (paramIdx < msg.getParamCount()) {
+                    const std::string& targetNick = msg.getParams()[paramIdx];
+                    if (channel->hasMember(targetNick)) {
+                        if (adding) {
+                            channel->addOperator(targetNick);
+                            appliedModes += "+o";
+                        } else {
+                            channel->removeOperator(targetNick);
+                            appliedModes += "-o";
+                        }
+                        appliedParams += " " + targetNick;
+                    }
+                    ++paramIdx;
+                }
+                break;
+                
+            case 'l':
+                if (adding) {
+                    if (paramIdx < msg.getParamCount()) {
+                        int limit = std::atoi(msg.getParams()[paramIdx].c_str());
+                        if (limit > 0) {
+                            channel->setUserLimit(limit);
+                            appliedModes += "+l";
+                            appliedParams += " " + msg.getParams()[paramIdx];
+                        }
+                        ++paramIdx;
+                    }
+                } else {
+                    channel->setUserLimit(0);
+                    appliedModes += "-l";
+                }
+                break;
+        }
+    }
+    
+    // Broadcast mode change if any modes were applied
+    if (!appliedModes.empty()) {
+        std::string modeMsg = Message::fromUser(client.getPrefix(), "MODE",
+            target + " " + appliedModes + appliedParams, "").serialize();
+        broadcastToChannel(target, modeMsg, "");
+    }
 }
 
 // ============================================================================

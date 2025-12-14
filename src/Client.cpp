@@ -64,6 +64,10 @@ std::string Client::getDisplayNick() const {
     return _nickname.empty() ? "*" : _nickname;
 }
 
+std::string Client::getPrefix() const {
+    return _nickname + "!" + _username + "@localhost";
+}
+
 // ============================================================================
 // SETTERS
 // ============================================================================
@@ -97,4 +101,8 @@ std::string Client::extractLine() {
         line.erase(line.size() - 1);
     
     return line;
+}
+
+bool Client::hasCompleteLine() const {
+    return _inputBuffer.find('\n') != std::string::npos;
 }
