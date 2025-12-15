@@ -117,6 +117,15 @@ public:
                             const std::string& target,
                             const std::string& text = "");
 
+    /** 
+     * Create user-originated message with 2 params: :nick!user@host CMD param1 param2
+     * No trailing (colon prefix), for INVITE etc.
+     */
+    static Message fromUser2Params(const std::string& userPrefix,
+                                   const std::string& cmd,
+                                   const std::string& param1,
+                                   const std::string& param2);
+
     // ========================================================================
     // VALIDATORS - Static validation utilities
     // ========================================================================

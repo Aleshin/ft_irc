@@ -197,6 +197,19 @@ Message Message::fromUser(const std::string& userPrefix,
     return msg;
 }
 
+Message Message::fromUser2Params(const std::string& userPrefix,
+                                 const std::string& cmd,
+                                 const std::string& param1,
+                                 const std::string& param2) {
+    Message msg;
+    msg._prefix = userPrefix;
+    msg._command = cmd;
+    msg._params.push_back(param1);
+    msg._params.push_back(param2);
+    msg._valid = true;
+    return msg;
+}
+
 // ============================================================================
 // VALIDATORS
 // ============================================================================

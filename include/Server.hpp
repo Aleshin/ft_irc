@@ -9,8 +9,6 @@
 #include "Client.hpp"
 #include "Channel.hpp"
 #include "Message.hpp"
-#include <cerrno>      // errno, EAGAIN, EWOULDBLOCK, etc.
-#include <cstring>     // strerror()
 
 /**
  * @class Server
@@ -71,6 +69,7 @@ private:
     
     // Validation helpers (reduce code duplication)
     bool requireRegistered(Client& client);
+    bool requireParams(Client& client, const Message& msg, size_t count, const std::string& cmd);
     Channel* requireChannel(Client& client, const std::string& name);
     bool requireOnChannel(Client& client, Channel* channel, const std::string& name);
     bool requireOperator(Client& client, Channel* channel, const std::string& name);

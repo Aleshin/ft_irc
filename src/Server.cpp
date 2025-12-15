@@ -7,7 +7,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <csignal>
+#include <cerrno>
+#include <cstdlib>
 
 // Константы
 static const size_t BUFFER_SIZE = 1024;
@@ -455,11 +456,8 @@ void Server::processCommand(Client& client, const std::string& line) {
 void Server::handlePass(Client& client, const Message& msg) {
     const std::string& nick = client.getDisplayNick();
     
-    if (msg.getParams().empty()) {
-        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick, 
-                                                  "PASS", "Not enough parameters").serialize());
+    if (!requireParams(client, msg, 1, "PASS"))
         return;
-    }
 
     if (client.isRegistered()) {
         sendToClient(client, Message::reply(ERR_ALREADYREGISTRED, nick, 
@@ -509,7 +507,41 @@ void Server::handleNick(Client& client, const Message& msg) {
     if (wasRegistered) {
         // Notify about nick change: :oldnick!user@host NICK :newnick
         std::string prefix = oldNick + "!" + client.getUsername() + "@localhost";
-        sendToClient(client, Message::fromUser(prefix, "NICK", newNick).serialize());
+        std::string nickMsg = Message::fromUser(prefix, "NICK", newNick).serialize();
+        
+        // Send to the client itself
+        sendToClient(client, nickMsg);
+        
+        // Send to all users in common channels and update channel member lists
+        std::set<int> notified;
+        notified.insert(client.getFd());
+        
+        for (std::map<std::string, Channel*>::iterator it = _channels.begin();
+             it != _channels.end(); ++it) {
+            Channel* chan = it->second;
+            if (chan->hasMember(oldNick)) {  // Check with OLD nick (channel hasn't been updated yet)
+                // Update channel member list: remove old nick, add new nick
+                chan->removeMember(oldNick);
+                chan->addMember(newNick);
+                
+                // Also update operator status if applicable
+                if (chan->isOperator(oldNick)) {
+                    chan->removeOperator(oldNick);
+                    chan->addOperator(newNick);
+                }
+                
+                // Notify all members in this channel
+                const std::set<std::string>& members = chan->getMembers();
+                for (std::set<std::string>::const_iterator mit = members.begin();
+                     mit != members.end(); ++mit) {
+                    Client* member = getClientByNick(*mit);
+                    if (member && notified.find(member->getFd()) == notified.end()) {
+                        sendToClient(*member, nickMsg);
+                        notified.insert(member->getFd());
+                    }
+                }
+            }
+        }
     } else {
         tryRegisterClient(client);
     }
@@ -518,11 +550,8 @@ void Server::handleNick(Client& client, const Message& msg) {
 void Server::handleUser(Client& client, const Message& msg) {
     const std::string& nick = client.getDisplayNick();
     
-    if (msg.getParams().size() < 3) {
-        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick, 
-                                                  "USER", "Not enough parameters").serialize());
+    if (!requireParams(client, msg, 3, "USER"))
         return;
-    }
 
     if (client.isRegistered()) {
         sendToClient(client, Message::reply(ERR_ALREADYREGISTRED, nick, 
@@ -544,16 +573,11 @@ void Server::handleUser(Client& client, const Message& msg) {
 void Server::handleJoin(Client& client, const Message& msg) {
     const std::string& nick = client.getDisplayNick();
     
-    // Check if registered
     if (!requireRegistered(client))
         return;
     
-    // Check for channel parameter
-    if (msg.getParams().empty()) {
-        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
-            "JOIN", "Not enough parameters").serialize());
+    if (!requireParams(client, msg, 1, "JOIN"))
         return;
-    }
     
     std::string channelName = msg.getParams()[0];
     
@@ -645,16 +669,11 @@ void Server::handleJoin(Client& client, const Message& msg) {
 }
 
 void Server::handlePart(Client& client, const Message& msg) {
-    const std::string& nick = client.getDisplayNick();
-    
     if (!requireRegistered(client))
         return;
     
-    if (msg.getParams().empty()) {
-        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
-            "PART", "Not enough parameters").serialize());
+    if (!requireParams(client, msg, 1, "PART"))
         return;
-    }
     
     std::string channelName = msg.getParams()[0];
     std::string reason = msg.getTrailing().empty() ? client.getNickname() : msg.getTrailing();
@@ -680,11 +699,8 @@ void Server::handlePrivmsg(Client& client, const Message& msg) {
     if (!requireRegistered(client))
         return;
     
-    if (msg.getParams().empty()) {
-        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
-            "PRIVMSG", "Not enough parameters").serialize());
+    if (!requireParams(client, msg, 1, "PRIVMSG"))
         return;
-    }
     
     std::string target = msg.getParams()[0];
     std::string text = msg.getTrailing();
@@ -730,12 +746,8 @@ void Server::handlePrivmsg(Client& client, const Message& msg) {
 void Server::handleKick(Client& client, const Message& msg) {
     const std::string& nick = client.getNickname();
     
-    // KICK requires at least 2 parameters: channel and target nick
-    if (msg.getParamCount() < 2) {
-        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
-            "KICK", "Not enough parameters").serialize());
+    if (!requireParams(client, msg, 2, "KICK"))
         return;
-    }
     
     const std::string& channelName = msg.getParams()[0];
     const std::string& targetNick = msg.getParams()[1];
@@ -773,12 +785,8 @@ void Server::handleKick(Client& client, const Message& msg) {
 void Server::handleInvite(Client& client, const Message& msg) {
     const std::string& nick = client.getNickname();
     
-    // INVITE requires 2 parameters: target nick and channel
-    if (msg.getParamCount() < 2) {
-        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
-            "INVITE", "Not enough parameters").serialize());
+    if (!requireParams(client, msg, 2, "INVITE"))
         return;
-    }
     
     const std::string& targetNick = msg.getParams()[0];
     const std::string& channelName = msg.getParams()[1];
@@ -818,20 +826,16 @@ void Server::handleInvite(Client& client, const Message& msg) {
     sendToClient(client, Message::replyParam(RPL_INVITING, nick,
         channelName, targetNick).serialize());
     
-    // Send INVITE notification to target
-    sendToClient(*target, Message::fromUser(client.getPrefix(), "INVITE",
+    // Send INVITE notification to target (no trailing colon for channel)
+    sendToClient(*target, Message::fromUser2Params(client.getPrefix(), "INVITE",
         targetNick, channelName).serialize());
 }
 
 void Server::handleTopic(Client& client, const Message& msg) {
     const std::string& nick = client.getNickname();
     
-    // TOPIC requires at least 1 parameter: channel
-    if (msg.getParamCount() < 1) {
-        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
-            "TOPIC", "Not enough parameters").serialize());
+    if (!requireParams(client, msg, 1, "TOPIC"))
         return;
-    }
     
     const std::string& channelName = msg.getParams()[0];
     
@@ -873,12 +877,8 @@ void Server::handleTopic(Client& client, const Message& msg) {
 void Server::handleMode(Client& client, const Message& msg) {
     const std::string& nick = client.getNickname();
     
-    // MODE requires at least 1 parameter: channel
-    if (msg.getParamCount() < 1) {
-        sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, nick,
-            "MODE", "Not enough parameters").serialize());
+    if (!requireParams(client, msg, 1, "MODE"))
         return;
-    }
     
     const std::string& target = msg.getParams()[0];
     
@@ -1095,6 +1095,14 @@ bool Server::requireRegistered(Client& client) {
         return true;
     sendToClient(client, Message::reply(ERR_NOTREGISTERED, client.getDisplayNick(),
         "You have not registered").serialize());
+    return false;
+}
+
+bool Server::requireParams(Client& client, const Message& msg, size_t count, const std::string& cmd) {
+    if (msg.getParamCount() >= count)
+        return true;
+    sendToClient(client, Message::replyParam(ERR_NEEDMOREPARAMS, client.getDisplayNick(),
+        cmd, "Not enough parameters").serialize());
     return false;
 }
 
