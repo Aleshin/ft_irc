@@ -2,51 +2,55 @@
 
 ## 📐 Принципы проектирования
 
-Проект построен на четких принципах:
-1. **Минимализм** - только необходимые классы (4 класса)
-2. **Каноническая форма C++98** - все классы следуют Orthodox Canonical Form
+1. **Минимализм** - только 4 класса
+2. **Каноническая форма C++98** - Orthodox Canonical Form
 3. **Разделение ответственности** - каждый класс решает одну задачу
-4. **Простота** - понятная структура без излишеств
+4. **Модульность** - Server разбит на логические файлы
+
+---
 
 ## 🏗️ Структура классов
 
 ### 1. Server (главный класс)
-**Файлы**: `include/Server.hpp`, `src/Server.cpp`
+
+**Файлы**: 
+- `include/Server.hpp` - объявление класса
+- `src/server/` - реализация (9 файлов)
 
 **Ответственность**: Управление сервером и координация всех компонентов
-- Сетевой слой (socket, poll, accept)
-- Управление клиентами и каналами
-- Диспетчеризация IRC команд
 
-**Ключевые методы**:
-- `run()` - главный event loop
-- `initSocket()` - инициализация сокета
-- `acceptClient()` - принятие новых клиентов
-- `handlePass/Nick/User/Join/Part/Privmsg/Kick/Invite/Topic/Mode()` - обработчики команд
+**Структура реализации**:
+```
+src/server/
+├── Core.cpp            # Конструкторы, деструктор, run() - главный цикл
+├── Network.cpp         # initSocket(), acceptClient(), poll management
+├── IO.cpp              # readFromClient(), writeToClient(), removeClient()
+├── Dispatch.cpp        # processCommand() - маршрутизация команд
+├── CmdRegistration.cpp # handlePass(), handleNick(), handleUser()
+├── CmdChannel.cpp      # handleJoin(), handlePart(), handleTopic(), handlePrivmsg()
+├── CmdOperator.cpp     # handleKick(), handleInvite()
+├── CmdMode.cpp         # handleMode() - все режимы i/t/k/o/l
+└── Helpers.cpp         # sendToClient(), broadcastToChannel(), require*()
+```
 
 **Поля**:
 ```cpp
-int _port;                          // Порт сервера
-std::string _password;              // Пароль подключения
-int _serverFd;                      // Серверный сокет
-std::vector<pollfd> _pollfds;       // Дескрипторы для poll()
-std::map<int, Client*> _clients;    // Клиенты (ключ = fd)
+int _port;                              // Порт сервера
+std::string _password;                  // Пароль подключения
+std::string _serverName;                // Имя сервера ("ircserv")
+int _serverFd;                          // Серверный сокет
+std::vector<pollfd> _pollfds;           // Дескрипторы для poll()
+std::map<int, Client*> _clients;        // Клиенты (ключ = fd)
 std::map<std::string, Channel*> _channels;  // Каналы (ключ = имя)
 ```
 
+---
+
 ### 2. Client (класс клиента)
+
 **Файлы**: `include/Client.hpp`, `src/Client.cpp`
 
-**Ответственность**: Хранение состояния клиентского соединения
-- Данные подключения (fd, буферы ввода/вывода)
-- Регистрационные данные (nickname, username)
-- Статус регистрации
-
-**Ключевые методы**:
-- `getFd/getNickname/getUsername()` - геттеры
-- `setNickname/setUsername/setPassword()` - сеттеры
-- `appendToInput/appendToOutput()` - работа с буферами
-- `extractLine()` - извлечение полной строки из буфера
+**Ответственность**: Состояние клиентского соединения
 
 **Поля**:
 ```cpp
@@ -58,172 +62,142 @@ std::string _username;      // Имя пользователя
 std::string _realname;      // Реальное имя (из USER)
 bool _hasPassword;          // Пароль введен
 bool _registered;           // Регистрация завершена
-bool _pendingDisconnect;    // Ожидает отключения (graceful)
+bool _pendingDisconnect;    // Ожидает отключения
 ```
 
+---
+
 ### 3. Channel (класс канала)
+
 **Файлы**: `include/Channel.hpp`, `src/Channel.cpp`
 
-**Ответственность**: Управление состоянием IRC канала
-- Участники и операторы
-- Топик канала
-- Режимы канала (+i, +t, +k, +o, +l)
-
-**Ключевые методы**:
-- `getName/getTopic/getMembers/getOperators()` - геттеры
-- `setTopic/setInviteOnly/setKey/setUserLimit()` - управление параметрами
-- `addMember/removeMember/hasMember()` - управление участниками
-- `addOperator/removeOperator/isOperator()` - управление операторами
+**Ответственность**: Состояние IRC канала
 
 **Поля**:
 ```cpp
-std::string _name;              // Имя канала (например, "#general")
+std::string _name;              // Имя канала (#general)
 std::string _topic;             // Топик канала
 std::set<std::string> _members; // Участники (nicknames)
 std::set<std::string> _operators;  // Операторы канала
-bool _inviteOnly;               // Режим +i (invite-only)
-bool _topicRestricted;          // Режим +t (только операторы меняют топик)
-std::string _key;               // Режим +k (пароль канала)
-int _userLimit;                 // Режим +l (лимит пользователей)
+std::set<std::string> _invited;    // Приглашенные (для +i)
+bool _inviteOnly;               // Режим +i
+bool _topicRestricted;          // Режим +t (по умолчанию true)
+std::string _key;               // Режим +k (пароль)
+int _userLimit;                 // Режим +l (лимит)
 ```
 
+---
+
 ### 4. Message (вспомогательный класс)
+
 **Файлы**: `include/Message.hpp`, `src/Message.cpp`
 
 **Ответственность**: IRC протокол
-- Парсинг IRC сообщений (формат: `[:prefix] COMMAND [params] [:trailing]`)
-- Построение ответов сервера
+- Парсинг входящих сообщений
+- Построение исходящих ответов
 - Валидация (nickname, channel names)
-- IRC numeric codes (001, 401, и т.д.)
-
-**Ключевые методы**:
-- `parse()` - парсинг входящего сообщения
-- `buildWelcome/buildJoin/buildPart/buildPrivmsg()` - построение ответов
-- `buildNumericReply()` - построение числовых ответов
-- `isValidNickname/isValidChannelName()` - валидация
+- IRC numeric codes
 
 **Поля**:
 ```cpp
-std::string _prefix;                // Опциональный prefix
-std::string _command;               // Команда IRC
+std::string _prefix;                // Опциональный prefix (:nick!user@host)
+std::string _command;               // Команда IRC (NICK, JOIN, ...)
 std::vector<std::string> _params;   // Параметры команды
+std::string _trailing;              // Текст после : (может содержать пробелы)
+bool _valid;                        // Результат парсинга
+static std::string _serverName;     // Имя сервера для ответов
 ```
+
+---
 
 ## 🔄 Поток данных
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    IRC Client                       │
-└──────────────────┬──────────────────────────────────┘
-                   │ TCP/IP
-                   ▼
-┌─────────────────────────────────────────────────────┐
-│                   Server::run()                     │
-│  ┌────────────────────────────────────────┐        │
-│  │  poll() - ожидание событий             │        │
-│  └─────────────┬──────────────────────────┘        │
-│                │                                     │
-│                ├─► POLLIN на serverFd                │
-│                │   └─► acceptClient()                │
-│                │                                     │
-│                ├─► POLLIN на client fd               │
-│                │   └─► readFromClient()              │
-│                │       └─► Client::appendToInput()   │
-│                │           └─► Client::extractLine() │
-│                │               └─► processCommand()  │
-│                │                   └─► Message::parse()│
-│                │                       └─► handleXXX()│
-│                │                           └─► Channel│
-│                │                                     │
-│                └─► POLLOUT на client fd              │
-│                    └─► writeToClient()               │
-│                        └─► Client::getOutputBuffer() │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       IRC Client                            │
+└────────────────────────┬────────────────────────────────────┘
+                         │ TCP/IP
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Server::run()                            │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  poll() - ожидание событий на всех fd               │   │
+│  └────────────────────────┬────────────────────────────┘   │
+│                           │                                 │
+│                           ├─► POLLIN на serverFd            │
+│                           │   └─► acceptClient()            │
+│                           │                                 │
+│                           ├─► POLLIN на client fd           │
+│                           │   └─► recv() → inputBuffer      │
+│                           │       └─► extractLine()         │
+│                           │           └─► Message::parse()  │
+│                           │               └─► handleXXX()   │
+│                           │                   └─► Channel   │
+│                           │                                 │
+│                           └─► POLLOUT на client fd          │
+│                               └─► send() ← outputBuffer     │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## 📋 Требования из subject
+---
 
-### Обязательные команды:
-- ✅ **PASS** - аутентификация паролем
-- ✅ **NICK** - установка никнейма
-- ✅ **USER** - установка username
-- ✅ **JOIN** - присоединение к каналу
-- ✅ **PART** - выход из канала
-- ✅ **PRIVMSG** - отправка сообщения
-- ✅ **KICK** - исключение пользователя (operator)
-- ✅ **INVITE** - приглашение в канал (operator)
-- ✅ **TOPIC** - изменение топика (operator)
-- ✅ **MODE** - изменение режимов канала (operator)
-  - `+i/-i` - Invite-only
-  - `+t/-t` - Topic restricted
-  - `+k/-k` - Channel key (password)
-  - `+o/-o` - Give/take operator privilege
-  - `+l/-l` - User limit
+## 📋 IRC команды
 
-### Технические требования:
-- ✅ C++98 стандарт
-- ✅ Каноническая форма классов
-- ✅ poll() для всех I/O операций
-- ✅ Неблокирующий I/O
-- ✅ Без fork()
-- ✅ Множественные клиенты
+| Команда | Файл | Описание |
+|---------|------|----------|
+| PASS | CmdRegistration.cpp | Аутентификация паролем |
+| NICK | CmdRegistration.cpp | Установка никнейма |
+| USER | CmdRegistration.cpp | Регистрация пользователя |
+| JOIN | CmdChannel.cpp | Вход в канал |
+| PART | CmdChannel.cpp | Выход из канала |
+| TOPIC | CmdChannel.cpp | Топик канала |
+| PRIVMSG | CmdChannel.cpp | Отправка сообщения |
+| KICK | CmdOperator.cpp | Исключение из канала |
+| INVITE | CmdOperator.cpp | Приглашение в канал |
+| MODE | CmdMode.cpp | Режимы канала |
+| PING | Dispatch.cpp | Keep-alive |
+| QUIT | Dispatch.cpp | Отключение |
 
-## 🎓 Что должны реализовать студенты
+---
 
-### 1. Сетевой слой (Server)
-- `initSocket()` - создание и bind сокета
-- `acceptClient()` - принятие соединений
-- `readFromClient()` - чтение данных
-- `writeToClient()` - отправка данных
-- `removeClient()` - удаление клиента
-
-### 2. IRC протокол (Message)
-- `parse()` - парсинг IRC сообщений
-- `buildXXX()` - построение ответов
-- `isValidXXX()` - валидация
-
-### 3. Команды (Server)
-- `handlePass()` - проверка пароля
-- `handleNick()` - установка nickname
-- `handleUser()` - установка username
-- `handleJoin()` - присоединение к каналу
-- `handlePart()` - выход из канала
-- `handlePrivmsg()` - отправка сообщения
-- `handleKick()` - исключение пользователя
-- `handleInvite()` - приглашение в канал
-- `handleTopic()` - изменение топика
-- `handleMode()` - изменение режимов
-
-### 4. Вспомогательные функции
-- `tryRegisterClient()` - завершение регистрации
-- `broadcastToChannel()` - рассылка по каналу
-- `getChannel()` / `getClientByNick()` - поиск
-
-## 📊 Итоговая статистика
+## 📊 Итоговая структура
 
 ```
-Структура:
-├── include/ (4 файла)
-│   ├── Server.hpp      (главный класс)
-│   ├── Client.hpp      (клиент)
-│   ├── Channel.hpp     (канал)
-│   └── Message.hpp     (IRC протокол)
+ft_irc/
+├── include/              # 4 заголовочных файла
+│   ├── Server.hpp
+│   ├── Client.hpp
+│   ├── Channel.hpp
+│   └── Message.hpp
 │
-└── src/ (5 файлов)
-    ├── main.cpp        (точка входа)
-    ├── Server.cpp      (реализация сервера)
-    ├── Client.cpp      (реализация клиента)
-    ├── Channel.cpp     (реализация канала)
-    └── Message.cpp     (реализация протокола)
+└── src/                  # 13 файлов реализации
+    ├── main.cpp
+    ├── Client.cpp
+    ├── Channel.cpp
+    ├── Message.cpp
+    │
+    └── server/           # Server разбит на 9 модулей
+        ├── Core.cpp
+        ├── Network.cpp
+        ├── IO.cpp
+        ├── Dispatch.cpp
+        ├── CmdRegistration.cpp
+        ├── CmdChannel.cpp
+        ├── CmdOperator.cpp
+        ├── CmdMode.cpp
+        └── Helpers.cpp
 
-Итого: 4 класса, 9 файлов, чистая архитектура
+Итого: 4 класса, 17 файлов, модульная архитектура
 ```
+
+---
 
 ## ✨ Преимущества архитектуры
 
-1. **Минимализм** - только необходимое
-2. **Ясность** - сразу видно, за что отвечает каждый класс
-3. **Расширяемость** - легко добавлять новые команды
-4. **Тестируемость** - каждый класс можно тестировать отдельно
+1. **Минимализм** - только 4 класса, каждый с ясной ответственностью
+2. **Модульность** - Server разбит на логические файлы по ~100-200 строк
+3. **Читаемость** - легко найти нужный код по имени файла
+4. **Расширяемость** - новые команды добавляются в соответствующий Cmd*.cpp
 5. **Каноничность** - все классы следуют C++98 Orthodox Canonical Form
-

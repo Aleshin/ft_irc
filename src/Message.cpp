@@ -1,3 +1,19 @@
+/**
+ * @file Message.cpp
+ * @brief IRC message handling: parsing, building, validation, serialization
+ * 
+ * This file implements the Message class for IRC protocol operations.
+ * 
+ * IRC message format (RFC 2812):
+ *   [:prefix] COMMAND [params] [:trailing]\r\n
+ * 
+ * Where:
+ *   - prefix: optional sender (for server->client messages)
+ *   - COMMAND: uppercase command name or 3-digit numeric code
+ *   - params: space-separated parameters (max 15)
+ *   - trailing: text after ":" (can contain spaces)
+ */
+
 #include "Message.hpp"
 #include <cctype>
 #include <algorithm>

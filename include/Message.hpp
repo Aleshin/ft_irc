@@ -7,53 +7,63 @@
 
 // ============================================================================
 // IRC Numeric Reply Codes (RFC 2812)
+// 
+// Servers use 3-digit numeric codes for responses:
+//   001-004: Welcome sequence after successful registration
+//   3xx: Channel information (topic, names, modes)
+//   4xx: Errors (no such nick, not on channel, etc.)
 // ============================================================================
 
-// Welcome (001-004)
-#define RPL_WELCOME          1
-#define RPL_YOURHOST         2
-#define RPL_CREATED          3
-#define RPL_MYINFO           4
+// Welcome sequence (sent after successful PASS + NICK + USER)
+#define RPL_WELCOME          1    // :server 001 nick :Welcome to IRC...
+#define RPL_YOURHOST         2    // :server 002 nick :Your host is...
+#define RPL_CREATED          3    // :server 003 nick :Server created...
+#define RPL_MYINFO           4    // :server 004 nick servername version modes
 
-// Channel (300s)
-#define RPL_NOTOPIC          331
-#define RPL_TOPIC            332
-#define RPL_INVITING         341
-#define RPL_NAMREPLY         353
-#define RPL_ENDOFNAMES       366
-#define RPL_CHANNELMODEIS    324
+// Channel information
+#define RPL_NOTOPIC          331  // No topic set on channel
+#define RPL_TOPIC            332  // Channel topic text
+#define RPL_INVITING         341  // Confirms INVITE was sent
+#define RPL_NAMREPLY         353  // List of users in channel (@ = operator)
+#define RPL_ENDOFNAMES       366  // End of NAMES list
+#define RPL_CHANNELMODEIS    324  // Current channel modes
 
-// Errors (400s)
-#define ERR_NOSUCHNICK       401
-#define ERR_NOSUCHCHANNEL    403
-#define ERR_CANNOTSENDTOCHAN 404
-#define ERR_UNKNOWNCOMMAND   421
-#define ERR_NONICKNAMEGIVEN  431
-#define ERR_ERRONEUSNICKNAME 432
-#define ERR_NICKNAMEINUSE    433
-#define ERR_USERNOTINCHANNEL 441
-#define ERR_NOTONCHANNEL     442
-#define ERR_USERONCHANNEL    443
-#define ERR_NOTREGISTERED    451
-#define ERR_NEEDMOREPARAMS   461
-#define ERR_ALREADYREGISTRED 462
-#define ERR_PASSWDMISMATCH   464
-#define ERR_CHANNELISFULL    471
-#define ERR_INVITEONLYCHAN   473
-#define ERR_BADCHANNELKEY    475
-#define ERR_CHANOPRIVSNEEDED 482
+// Error responses
+#define ERR_NOSUCHNICK       401  // Target nickname not found
+#define ERR_NOSUCHCHANNEL    403  // Target channel not found
+#define ERR_CANNOTSENDTOCHAN 404  // Not allowed to send to channel
+#define ERR_UNKNOWNCOMMAND   421  // Command not recognized
+#define ERR_NONICKNAMEGIVEN  431  // NICK command without nickname
+#define ERR_ERRONEUSNICKNAME 432  // Invalid nickname characters
+#define ERR_NICKNAMEINUSE    433  // Nickname already taken
+#define ERR_USERNOTINCHANNEL 441  // Target user not in channel (KICK)
+#define ERR_NOTONCHANNEL     442  // You're not in that channel
+#define ERR_USERONCHANNEL    443  // User already in channel (INVITE)
+#define ERR_NOTREGISTERED    451  // Must register before this command
+#define ERR_NEEDMOREPARAMS   461  // Not enough parameters
+#define ERR_ALREADYREGISTRED 462  // Can't re-register
+#define ERR_PASSWDMISMATCH   464  // Wrong server password
+#define ERR_CHANNELISFULL    471  // Channel +l limit reached
+#define ERR_INVITEONLYCHAN   473  // Channel +i, you're not invited
+#define ERR_BADCHANNELKEY    475  // Wrong channel +k password
+#define ERR_CHANOPRIVSNEEDED 482  // You're not operator
 
 /**
  * @class Message
- * @brief Unified IRC message: parsing, building, and serialization
+ * @brief IRC message parser, builder, and serializer
  *
- * This class handles ALL message operations in a clean OOP manner:
- * - Parsing incoming messages (static parse())
- * - Building outgoing messages (fluent builder + factory methods)
- * - Serialization to IRC protocol format
- * - Validation of IRC entities (nick, channel, user)
- *
- * IRC Format (RFC 2812): [:prefix] command [params] [:trailing] CRLF
+ * IRC message format (RFC 2812):
+ *   [:prefix] COMMAND [param1 param2 ...] [:trailing text]\r\n
+ * 
+ * Examples:
+ *   NICK alice                        - Set nickname
+ *   :alice!user@host PRIVMSG #chat :Hello everyone
+ *   :server 001 alice :Welcome!       - Numeric reply
+ * 
+ * Usage:
+ *   Parsing:  Message msg = Message::parse(line);
+ *   Building: Message::reply(RPL_WELCOME, nick, "Welcome!").serialize();
+ *   Fluent:   Message().prefix(p).command(c).param(p).serialize();
  */
 class Message {
 public:

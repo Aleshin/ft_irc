@@ -13,7 +13,7 @@
 | Режимы каналов | ✅ |
 | PING/PONG | ✅ |
 | Сигналы | ✅ |
-| **Тесты: 102/102** | ✅ |
+| **Тесты: 92/92** | ✅ |
 
 ---
 
@@ -87,28 +87,9 @@ irssi -c localhost -p 6667 -w mypassword
 ## 🧪 Тестирование
 
 ```bash
-# Быстрый тест (13 проверок)
-IRC_PORT=6667 IRC_PASS=mypassword ./tests/quick_test.sh
-
-# Полный тест (59 проверок)
-IRC_PORT=6667 IRC_PASS=mypassword ./tests/full_test.sh
-
-# PING/PONG и стресс-тесты (20 проверок)
-IRC_PORT=6667 IRC_PASS=mypassword ./tests/extra_test.sh
-
-# Тест обработки сигналов (10 проверок)
-./tests/signal_test.sh
+# Запустить все тесты (92 проверки)
+./tests/comprehensive_test.sh
 ```
-
-### Результаты тестирования
-
-| Тест | ft_irc | ngircd |
-|------|--------|--------|
-| quick_test.sh | ✅ 13/13 | ✅ 13/13 |
-| full_test.sh | ✅ 59/59 | ✅ 59/59 |
-| extra_test.sh | ✅ 20/20 | ✅ 20/20 |
-| signal_test.sh | ✅ 10/10 | N/A |
-| **ИТОГО** | **102/102** | **92/92** |
 
 ---
 
@@ -116,32 +97,88 @@ IRC_PORT=6667 IRC_PASS=mypassword ./tests/extra_test.sh
 
 ```
 ft_irc/
-├── Makefile              # Сборка: all, clean, fclean, re
-├── ircserv               # Исполняемый файл
+├── Makefile                    # Сборка: all, clean, fclean, re
+├── ircserv                     # Исполняемый файл
 │
-├── include/
-│   ├── Server.hpp        # Главный класс сервера
-│   ├── Client.hpp        # Клиентское соединение
-│   ├── Channel.hpp       # IRC канал
-│   └── Message.hpp       # IRC сообщение и парсинг
+├── include/                    # Заголовочные файлы (4 класса)
+│   ├── Server.hpp              # Главный класс сервера
+│   ├── Client.hpp              # Клиентское соединение
+│   ├── Channel.hpp             # IRC канал
+│   └── Message.hpp             # IRC сообщение + парсинг + коды ответов
 │
-├── src/
-│   ├── main.cpp          # Точка входа + сигналы
-│   ├── Server.cpp        # Сетевой стек + команды
-│   ├── Client.cpp        # Буферы I/O
-│   ├── Channel.cpp       # Управление каналом
-│   └── Message.cpp       # Парсинг/сериализация
+├── src/                        # Исходные файлы
+│   ├── main.cpp                # Точка входа + обработка сигналов
+│   ├── Client.cpp              # Реализация Client
+│   ├── Channel.cpp             # Реализация Channel
+│   ├── Message.cpp             # Парсинг/сериализация IRC
+│   │
+│   └── server/                 # Реализация Server (разбит на модули)
+│       ├── Core.cpp            # Конструкторы, деструктор, run()
+│       ├── Network.cpp         # Socket, poll, accept
+│       ├── IO.cpp              # Чтение/запись клиентов
+│       ├── Dispatch.cpp        # Маршрутизация команд
+│       ├── CmdRegistration.cpp # PASS, NICK, USER
+│       ├── CmdChannel.cpp      # JOIN, PART, TOPIC, PRIVMSG
+│       ├── CmdOperator.cpp     # KICK, INVITE
+│       ├── CmdMode.cpp         # MODE i/t/k/o/l
+│       └── Helpers.cpp         # Вспомогательные функции
 │
 ├── tests/
-│   ├── quick_test.sh     # Быстрая проверка
-│   ├── full_test.sh      # Полное тестирование
-│   ├── extra_test.sh     # PING/PONG тесты
-│   └── signal_test.sh    # Тест сигналов
+│   └── comprehensive_test.sh   # 92 теста
 │
 └── docs/
-    ├── DEVELOPMENT_PLAN.md
-    ├── ft_irc_extended_subject.md
-    └── evaluation.md
+    ├── ARCHITECTURE.md         # Архитектура проекта
+    └── evaluation.md           # Критерии оценки
+```
+
+---
+
+## 🏗️ Архитектура
+
+### 4 класса (чистый ООП):
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                          Server                             │
+│  - Управляет сетью (socket, poll, accept)                  │
+│  - Хранит клиентов и каналы                                │
+│  - Обрабатывает IRC команды                                │
+└─────────────────────────────────────────────────────────────┘
+         │ contains                         │ contains
+         ▼                                  ▼
+┌─────────────────────┐          ┌─────────────────────┐
+│       Client        │          │       Channel       │
+│  - File descriptor  │          │  - Имя канала       │
+│  - Буферы I/O       │          │  - Участники        │
+│  - Ник, юзернейм    │          │  - Операторы        │
+│  - Статус регистр.  │          │  - Режимы (+i,+t..) │
+└─────────────────────┘          └─────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                        Message                              │
+│  - Парсинг IRC сообщений                                   │
+│  - Построение ответов сервера                              │
+│  - Валидация (ник, канал)                                  │
+│  - IRC numeric codes (001, 401, 433, ...)                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Поток данных:
+
+```
+IRC клиент  →  socket  →  poll(POLLIN)  →  recv()
+                                              ↓
+                                   Client.inputBuffer
+                                              ↓
+                                     extractLine()
+                                              ↓
+                                   Message::parse()
+                                              ↓
+                               processCommand() → handleXXX()
+                                              ↓
+                                   Client.outputBuffer
+                                              ↓
+poll(POLLOUT)  →  send()  →  IRC клиент
 ```
 
 ---
@@ -176,29 +213,9 @@ ft_irc/
 
 ---
 
-## 📊 Метрики кода
+## � Документация
 
-| Файл | Строки |
-|------|--------|
-| Server.cpp | 1187 |
-| Message.cpp | 305 |
-| Client.cpp | 108 |
-| Channel.cpp | 107 |
-| main.cpp | 47 |
-| **Итого src/** | **1754** |
-| Server.hpp | 82 |
-| Message.hpp | 159 |
-| Channel.hpp | 68 |
-| Client.hpp | 65 |
-| **Итого include/** | **374** |
-| **ВСЕГО** | **2128** |
-
----
-
-## 📚 Документация
-
-- [DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md) - План разработки
-- [ft_irc_extended_subject.md](docs/ft_irc_extended_subject.md) - Требования
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Подробная архитектура
 - [evaluation.md](docs/evaluation.md) - Критерии оценки
 
 ---

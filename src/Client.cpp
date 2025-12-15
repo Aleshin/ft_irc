@@ -1,7 +1,16 @@
+/**
+ * @file Client.cpp
+ * @brief Client class implementation - connection state and buffered I/O
+ * 
+ * This file implements the Client class following Orthodox Canonical Form (C++98).
+ * Each method is grouped by purpose for easy navigation.
+ */
+
 #include "Client.hpp"
 
 // ============================================================================
 // ORTHODOX CANONICAL FORM
+// C++98 requires: default constructor, copy constructor, assignment, destructor
 // ============================================================================
 
 Client::Client() 

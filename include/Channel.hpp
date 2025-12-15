@@ -6,11 +6,25 @@
 
 /**
  * @class Channel
- * @brief Represents an IRC channel
+ * @brief Represents an IRC channel (chat room)
  * 
- * Manages channel state including members, operators, topic, and modes.
- * Supports IRC channel modes: +i (invite-only), +t (topic restricted),
- * +k (key/password), +o (operator), +l (user limit).
+ * Channel names start with '#' or '&' (e.g., #general, &local).
+ * 
+ * Members and Operators:
+ *   - _members: set of nicknames currently in channel
+ *   - _operators: subset of members with elevated privileges
+ *   - First user to join becomes operator automatically
+ * 
+ * Channel modes (RFC 2812):
+ *   +i (invite-only)     - Users must be invited to join
+ *   +t (topic-protected) - Only operators can change topic
+ *   +k (key/password)    - Users must provide password to join
+ *   +o (operator)        - Grant/revoke operator status
+ *   +l (limit)           - Maximum number of users
+ * 
+ * Invite list:
+ *   - _invited: nicknames allowed to bypass +i mode
+ *   - Cleared after user joins or is kicked
  */
 class Channel {
 public:

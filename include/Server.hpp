@@ -12,10 +12,29 @@
 
 /**
  * @class Server
- * @brief Main IRC server class
+ * @brief Main IRC server - coordinates all components
  * 
- * Manages network I/O, client connections, channels, and IRC command processing.
- * Uses poll() for non-blocking I/O multiplexing.
+ * The Server class is the central hub of the IRC server:
+ * - Manages the TCP socket and accepts new connections
+ * - Uses poll() for non-blocking I/O multiplexing
+ * - Stores all clients in _clients map (key = file descriptor)
+ * - Stores all channels in _channels map (key = channel name)
+ * - Dispatches IRC commands to appropriate handlers
+ * 
+ * Architecture:
+ *   Server contains: Client* (many), Channel* (many)
+ *   Server uses: Message (for parsing/building IRC messages)
+ * 
+ * File organization (src/server/):
+ *   Core.cpp          - Lifecycle (constructor, destructor, run)
+ *   Network.cpp       - Socket setup and client acceptance
+ *   IO.cpp            - Reading and writing data
+ *   Dispatch.cpp      - Command routing
+ *   CmdRegistration.cpp - PASS, NICK, USER
+ *   CmdChannel.cpp    - JOIN, PART, TOPIC, PRIVMSG
+ *   CmdOperator.cpp   - KICK, INVITE
+ *   CmdMode.cpp       - MODE
+ *   Helpers.cpp       - Utility functions
  */
 class Server {
 public:

@@ -1,6 +1,18 @@
+/**
+ * @file Channel.cpp
+ * @brief Channel class implementation - IRC chat room management
+ * 
+ * This file implements the Channel class following Orthodox Canonical Form (C++98).
+ * Channels use std::set for members/operators for O(log n) lookups.
+ */
+
 #include "Channel.hpp"
 
-// Orthodox Canonical Form
+// ============================================================================
+// ORTHODOX CANONICAL FORM
+// ============================================================================
+
+// Default constructor - creates empty channel (topic restriction ON by default)
 Channel::Channel()
     : _name(),
       _topic(),

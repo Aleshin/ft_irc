@@ -5,10 +5,29 @@
 
 /**
  * @class Client
- * @brief Represents an IRC client connection
+ * @brief Represents a single IRC client connection
  * 
- * Manages client state including connection data, registration info,
- * and buffered I/O operations.
+ * Each Client object tracks:
+ * - File descriptor (_fd) for the socket connection
+ * - Input/output buffers for async I/O
+ * - Registration data: nickname, username, realname
+ * - State flags: password verified, registered, pending disconnect
+ * 
+ * Registration sequence:
+ *   1. Client connects (new Client created)
+ *   2. Client sends PASS command -> hasPassword() = true
+ *   3. Client sends NICK command -> nickname set
+ *   4. Client sends USER command -> username/realname set
+ *   5. All conditions met -> isRegistered() = true, welcome sent
+ * 
+ * Buffer management:
+ *   - Input buffer: accumulates received data until \r\n found
+ *   - Output buffer: queues messages to send
+ *   - extractLine(): removes and returns one complete IRC line
+ * 
+ * Graceful disconnect:
+ *   - setPendingDisconnect(true) marks client for removal
+ *   - Client stays alive until output buffer is flushed
  */
 class Client {
 public:
