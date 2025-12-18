@@ -290,7 +290,8 @@ sleep 1.5
     [ -n "$SERVER_PASS" ] && printf 'PASS %s\r\n' "$SERVER_PASS"
     printf 'NICK msg4\r\nUSER m 0 * :M\r\nJOIN #nomember\r\nPART #nomember\r\nPRIVMSG #nomember :hi\r\n'
     sleep 2
-} | nc localhost $SERVER_PORT > "$TMPDIR/msg4.txt" 2>&1
+} | timeout 3s nc -N localhost $SERVER_PORT > "$TMPDIR/msg4.txt" 2>&1 || true
+
 kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
 OUT=$(cat "$TMPDIR/msg4.txt")
 check "404 not on channel (+n)" "401|403|404|442" "$OUT"
