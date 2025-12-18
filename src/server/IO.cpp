@@ -12,11 +12,10 @@
  * handleClient():
  *   - Extracts complete lines (ending with \r\n) from buffer
  *   - Passes each line to processCommand() for IRC processing
- *   - Attempts immediate output flush
  * 
  * writeToClient() / flushClientOutput():
- *   - Sends pending data from output buffer
- *   - Uses POLLOUT for async writes when buffer not empty
+ *   - Sends pending data from output buffer (one send() per call)
+ *   - Event-driven: POLLOUT triggers send when kernel ready
  * 
  * removeClient():
  *   - Notifies channel members about disconnect (QUIT message)
@@ -58,9 +57,6 @@ void Server::handleClient(size_t index) {
             std::cerr << "Command error: " << e.what() << std::endl;
         }
     }
-
-    // Try immediate send, fall back to POLLOUT for remaining data
-    flushClientOutput(*client);
 }
 
 void Server::readFromClient(Client& client) {
@@ -86,20 +82,20 @@ void Server::readFromClient(Client& client) {
 void Server::writeToClient(Client& client) {
     std::string& out = client.getOutputBuffer();
     
-    while (!out.empty()) {
-        ssize_t n = send(client.getFd(), out.data(), out.size(), 0);
+    if (out.empty())
+        return;
+    
+    // Send once per call - event-driven pattern
+    ssize_t n = send(client.getFd(), out.data(), out.size(), 0);
 
-        if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-                return;  // Would block, try again later
-            throw std::runtime_error("send() failed: " + std::string(strerror(errno)));
-        }
-
-        if (n == 0)
-            return;
-
-        out.erase(0, static_cast<size_t>(n));
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return;  // Kernel buffer full, wait for POLLOUT
+        throw std::runtime_error("send() failed: " + std::string(strerror(errno)));
     }
+
+    if (n > 0)
+        out.erase(0, static_cast<size_t>(n));
 }
 
 void Server::flushClientOutput(Client& client) {

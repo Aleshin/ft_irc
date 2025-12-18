@@ -3,7 +3,7 @@
  * @brief Utility functions: sending, broadcasting, lookups, validation
  * 
  * Message sending:
- *   - sendToClient() - Queue message to specific client
+ *   - sendToClient() - Queue message and enable POLLOUT
  *   - broadcastToChannel() - Send to all channel members (except one)
  * 
  * Lookup helpers:
@@ -29,13 +29,12 @@
 // ============================================================================
 
 void Server::sendToClient(Client& client, const std::string& message) {
+    bool wasEmpty = client.getOutputBuffer().empty();
     client.appendToOutput(message);
-    // Immediately try to flush output buffer
-    try {
-        flushClientOutput(client);
-    } catch (...) {
-        // Ignore errors, will be handled in main loop
-    }
+    
+    // If buffer was empty, enable POLLOUT to trigger send
+    if (wasEmpty && !client.getOutputBuffer().empty())
+        updatePollEvents(client.getFd(), POLLIN | POLLOUT);
 }
 
 void Server::broadcastToChannel(const std::string& channelName,
