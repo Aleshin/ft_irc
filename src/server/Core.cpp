@@ -20,6 +20,7 @@
 #include <cstring>
 #include <unistd.h>
 #include <cerrno>
+#include <csignal>
 
 // External signal flag from main.cpp
 extern volatile sig_atomic_t g_running;
