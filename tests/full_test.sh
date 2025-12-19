@@ -2,8 +2,8 @@
 # Full IRC Server Test Suite - Comprehensive tests for all functionality
 # Validated against ngircd reference implementation
 
-SERVER_PORT="${IRC_PORT:-6667}"
-SERVER_PASS="${IRC_PASS:-}"
+SERVER_PORT=6697
+SERVER_PASS="testpass"
 TMPDIR=$(mktemp -d)
 
 PASSED=0

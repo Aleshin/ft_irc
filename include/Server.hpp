@@ -94,7 +94,6 @@ private:
     bool requireOperator(Client& client, Channel* channel, const std::string& name);
     void deleteChannelIfEmpty(const std::string& name);
 
-private:
     int                     _port;
     std::string             _password;
     std::string             _serverName;

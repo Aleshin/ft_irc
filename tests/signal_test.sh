@@ -4,7 +4,7 @@
 # NOTE: This test requires the server binary, not a running server
 
 IRCSERV="${IRCSERV:-./ircserv}"
-TEST_PORT="${TEST_PORT:-6699}"
+TEST_PORT=6697
 TEST_PASS="testpass"
 
 PASSED=0

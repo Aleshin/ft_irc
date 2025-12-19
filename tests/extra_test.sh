@@ -2,8 +2,8 @@
 # Extra IRC Server Test Suite - PING/PONG and Signal handling
 # Tests for new functionality added after main test suites
 
-SERVER_PORT="${IRC_PORT:-6667}"
-SERVER_PASS="${IRC_PASS:-}"
+SERVER_PORT=6697
+SERVER_PASS="testpass"
 SERVER_PID=""
 
 PASSED=0

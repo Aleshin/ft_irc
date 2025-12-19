@@ -2,8 +2,8 @@
 # Quick IRC Server Test Suite - Minimal tests for subject requirements
 # Validated against ngircd reference implementation
 
-SERVER_PORT="${IRC_PORT:-6667}"
-SERVER_PASS="${IRC_PASS:-}"
+SERVER_PORT=6697
+SERVER_PASS="testpass"
 
 PASSED=0
 FAILED=0
